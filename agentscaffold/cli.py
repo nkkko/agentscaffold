@@ -16,6 +16,7 @@ def new(
     name: str,
     template: Optional[str] = "basic",
     output_dir: Optional[str] = None,
+    skip_install: bool = False,
 ):
     """
     Create a new agent with the specified name and template.
@@ -24,6 +25,7 @@ def new(
         name: Name of the agent to create
         template: Template to use (default: basic)
         output_dir: Directory to output the agent (default: current directory)
+        skip_install: Skip installing dependencies
     """
     if output_dir is None:
         output_dir = os.getcwd()
@@ -41,16 +43,36 @@ def new(
     except (subprocess.CalledProcessError, FileNotFoundError):
         has_uv = False
     
-    if has_uv:
+    if has_uv and not skip_install:
         typer.echo("Setting up virtual environment with UV...")
-        subprocess.run(["uv", "venv", ".venv"], cwd=agent_dir, check=True)
-        subprocess.run(["uv", "pip", "install", "-e", "."], cwd=agent_dir, check=True)
+        try:
+            subprocess.run(["uv", "venv", ".venv"], cwd=agent_dir, check=True)
+            
+            # Install the local AgentScaffold package first if it exists
+            agent_scaffold_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            
+            try:
+                typer.echo("Installing local AgentScaffold package...")
+                subprocess.run(["uv", "pip", "install", "-e", agent_scaffold_dir], 
+                              cwd=agent_dir, check=True)
+            except subprocess.CalledProcessError:
+                typer.echo("Warning: Failed to install local AgentScaffold package")
+            
+            # Now install the agent package itself
+            typer.echo("Installing agent package...")
+            try:
+                subprocess.run(["uv", "pip", "install", "-e", "."], 
+                              cwd=agent_dir, check=True)
+            except subprocess.CalledProcessError:
+                typer.echo("Warning: Failed to install agent package")
+        except subprocess.CalledProcessError:
+            typer.echo("Warning: Failed to set up virtual environment")
     
     typer.echo(f"✅ Agent '{name}' created successfully!")
     typer.echo(f"To run your agent:")
     typer.echo(f"  cd {name}")
     
-    if has_uv:
+    if has_uv and not skip_install:
         typer.echo(f"  # Activate the virtual environment")
         if sys.platform == "win32":
             typer.echo(f"  .venv\\Scripts\\activate")

@@ -1,4 +1,4 @@
-"""Agent implementation for {{agent_name}}."""
+"""Agent implementation for moj-agent."""
 
 import os
 import json
@@ -9,21 +9,21 @@ from pydantic_ai import Agent as PydanticAgent
 from agentscaffold.agent import Agent as BaseAgent, AgentInput, AgentOutput
 
 
-class {{agent_class_name}}Input(AgentInput):
-    """Input for {{agent_class_name}} agent."""
+class MojAgentInput(AgentInput):
+    """Input for MojAgent agent."""
     
     # Add custom input fields here
     pass
 
 
-class {{agent_class_name}}Output(AgentOutput):
-    """Output for {{agent_class_name}} agent."""
+class MojAgentOutput(AgentOutput):
+    """Output for MojAgent agent."""
     
     # Add custom output fields here
     pass
 
 
-class {{agent_class_name}}PydanticResult(BaseModel):
+class MojAgentPydanticResult(BaseModel):
     """Result from Pydantic AI Agent."""
     
     message: str = Field(description="Response message")
@@ -31,22 +31,22 @@ class {{agent_class_name}}PydanticResult(BaseModel):
 
 
 class Agent(BaseAgent):
-    """{{agent_class_name}} agent implementation."""
+    """MojAgent agent implementation."""
     
-    name: str = "{{agent_class_name}}"
-    description: str = "A {{agent_name}} agent"
-    input_class = {{agent_class_name}}Input
-    output_class = {{agent_class_name}}Output
+    name: str = "MojAgent"
+    description: str = "A moj-agent agent"
+    input_class = MojAgentInput
+    output_class = MojAgentOutput
     
     def __init__(self, **data):
         super().__init__(**data)
         # Initialize Pydantic AI agent
         self.pydantic_agent = PydanticAgent(
             "openai:gpt-4o",  # Can be configured via environment variables
-            result_type={{agent_class_name}}PydanticResult,
+            result_type=MojAgentPydanticResult,
             system_prompt=(
-                "You are {{agent_class_name}}, an AI assistant designed to help with "
-                "{{agent_name}}. Be helpful, concise, and accurate in your responses."
+                "You are MojAgent, an AI assistant designed to help with "
+                "moj-agent. Be helpful, concise, and accurate in your responses."
             )
         )
     

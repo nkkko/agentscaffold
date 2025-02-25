@@ -1,0 +1,5 @@
+# Dependencies for moj-agent
+pydantic>=2.0.0
+agentscaffold
+pydantic-ai
+daytona-sdk

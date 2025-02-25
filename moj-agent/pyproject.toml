@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moj_agent"
+version = "0.1.0"
+description = "A moj-agent agent built with AgentScaffold"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0.0",
+    "agentscaffold",
+    "pydantic-ai",
+    "daytona-sdk",
+]
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I"]
