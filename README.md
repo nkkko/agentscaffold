@@ -4,6 +4,8 @@ A framework for scaffolding AI agents using Pydantic and Daytona runtime.
 
 ## Installation
 
+NOTE. Use development instructions.
+
 ```bash
 # Install with pip
 pip install agentscaffold
@@ -19,9 +21,6 @@ Create a new agent:
 ```bash
 # Using the full command
 agentscaffold new my-agent
-
-# Using the alias
-as new my-agent
 ```
 
 Run an agent:
@@ -66,7 +65,7 @@ cd AgentScaffold
 # Install development dependencies
 uv venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-uv pip install -e .
+uv pip install -e ".[dev]"
 
 # Run tests
 pytest

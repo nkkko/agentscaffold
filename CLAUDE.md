@@ -18,9 +18,9 @@
 - **Testing**: Write pytest tests for all functionality
 
 ## CLI Usage
-- Create new agent: `agentscaffold new my-agent` or `as new my-agent`
-- Run agent: `agentscaffold run` or `as run`
-- Check version: `agentscaffold version` or `as version`
+- Create new agent: `agentscaffold new my-agent`
+- Run agent: `agentscaffold run`
+- Check version: `agentscaffold version`
 
 ## UV Support
 AgentScaffold supports uv for fast dependency management. If uv is installed, the scaffolding will automatically create a uv-compatible virtual environment.
