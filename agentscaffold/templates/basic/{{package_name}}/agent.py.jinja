@@ -1,0 +1,155 @@
+"""Agent implementation for {{agent_name}}."""
+
+import os
+from pydantic import BaseModel, Field
+from typing import Dict, Any, Optional
+import json
+
+from daytona_sdk import Daytona, DaytonaConfig, CreateWorkspaceParams
+from pydantic_ai import Agent as PydanticAgent, RunContext
+from agentscaffold.agent import Agent as BaseAgent, AgentInput, AgentOutput
+
+
+class {{agent_class_name}}Input(AgentInput):
+    """Input for {{agent_class_name}} agent."""
+    
+    # Add custom input fields here
+    pass
+
+
+class {{agent_class_name}}Output(AgentOutput):
+    """Output for {{agent_class_name}} agent."""
+    
+    # Add custom output fields here
+    pass
+
+
+class {{agent_class_name}}PydanticResult(BaseModel):
+    """Result from Pydantic AI Agent."""
+    
+    message: str = Field(description="Response message")
+    additional_info: Dict[str, Any] = Field(default_factory=dict, description="Additional information")
+
+
+class DaytonaWorkspace:
+    """Daytona workspace handler."""
+    
+    def __init__(self):
+        # Initialize Daytona client
+        api_key = os.environ.get("DAYTONA_API_KEY")
+        server_url = os.environ.get("DAYTONA_SERVER_URL")
+        target = os.environ.get("DAYTONA_TARGET", "local")
+        
+        config = None
+        if api_key and server_url:
+            config = DaytonaConfig(
+                api_key=api_key,
+                server_url=server_url,
+                target=target
+            )
+        
+        self.daytona = Daytona(config)
+        self.workspace = None
+    
+    def __enter__(self):
+        # Create a workspace
+        params = CreateWorkspaceParams(language="python")
+        self.workspace = self.daytona.create(params)
+        return self.workspace
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Clean up workspace
+        if self.workspace:
+            self.daytona.remove(self.workspace)
+
+
+class Agent(BaseAgent):
+    """{{agent_class_name}} agent implementation."""
+    
+    name: str = "{{agent_class_name}}"
+    description: str = "A {{agent_name}} agent"
+    input_class = {{agent_class_name}}Input
+    output_class = {{agent_class_name}}Output
+    
+    def __init__(self, **data):
+        super().__init__(**data)
+        # Initialize Pydantic AI agent
+        self.pydantic_agent = PydanticAgent(
+            "openai:gpt-4o",  # Can be configured via environment variables
+            result_type={{agent_class_name}}PydanticResult,
+            system_prompt=(
+                "You are {{agent_class_name}}, an AI assistant designed to help with "
+                "{{agent_name}}. Be helpful, concise, and accurate in your responses."
+            )
+        )
+    
+    async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process input data and generate output using Daytona for secure execution.
+        
+        Args:
+            input_data: Validated input data
+            
+        Returns:
+            Agent output
+        """
+        try:
+            with DaytonaWorkspace() as workspace:
+                # Run the agent within Daytona sandbox
+                code = self._generate_agent_code(input_data['message'])
+                
+                # Execute code in the workspace
+                response = workspace.process.code_run(code)
+                
+                if response.exit_code != 0:
+                    return {
+                        "response": f"Error in execution: {response.result}",
+                        "metadata": {"error": True, "exit_code": response.exit_code}
+                    }
+                
+                # Parse the result
+                try:
+                    result = json.loads(response.result)
+                    return {
+                        "response": result.get("message", response.result),
+                        "metadata": result.get("additional_info", {})
+                    }
+                except json.JSONDecodeError:
+                    # Process with Pydantic AI as fallback
+                    result = await self.pydantic_agent.run(input_data['message'])
+                    return {
+                        "response": result.data.message,
+                        "metadata": result.data.additional_info
+                    }
+        except Exception as e:
+            # Fallback to direct Pydantic AI if Daytona fails
+            result = await self.pydantic_agent.run(input_data['message'])
+            return {
+                "response": result.data.message,
+                "metadata": {"error": str(e), **result.data.additional_info}
+            }
+    
+    def _generate_agent_code(self, message: str) -> str:
+        """Generate Python code to execute in the Daytona sandbox."""
+        return f'''
+import json
+from pydantic import BaseModel, Field
+from typing import Dict, Any
+import os
+
+class {{agent_class_name}}PydanticResult(BaseModel):
+    message: str = Field(description="Response message")
+    additional_info: Dict[str, Any] = Field(default_factory=dict, description="Additional information")
+
+# Process the user message
+user_message = """{message}"""
+
+# Generate a response (simplified example)
+result = {{agent_class_name}}PydanticResult(
+    message=f"I processed your request: {{user_message}}",
+    additional_info={{"processed_in": "Daytona sandbox"}}
+)
+
+# Output as JSON
+print(result.model_dump_json())
+'''

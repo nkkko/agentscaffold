@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+agentscaffold/__init__.py
+agentscaffold/agent.py
+agentscaffold/cli.py
+agentscaffold/scaffold.py
+agentscaffold.egg-info/PKG-INFO
+agentscaffold.egg-info/SOURCES.txt
+agentscaffold.egg-info/dependency_links.txt
+agentscaffold.egg-info/entry_points.txt
+agentscaffold.egg-info/requires.txt
+agentscaffold.egg-info/top_level.txt
+tests/test_agent.py
+tests/test_cli.py
+tests/test_scaffold.py
