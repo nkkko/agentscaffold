@@ -5,6 +5,7 @@ import typer
 from typing import Optional
 import subprocess
 import sys
+import pathlib
 
 from agentscaffold.scaffold import create_new_agent
 
@@ -94,13 +95,19 @@ def new(
 @app.command()
 def run(
     agent_dir: Optional[str] = ".",
+    local: bool = False,
+    message: Optional[str] = None,
 ):
     """
-    Run an agent in the specified directory.
+    Run an agent in the specified directory, using Daytona for remote execution.
     
     Args:
         agent_dir: Directory containing the agent (default: current directory)
+        local: Run locally instead of using Daytona remote execution
+        message: Optional message to send to the agent
     """
+    # Get absolute path to agent directory
+    agent_dir = os.path.abspath(agent_dir)
     typer.echo(f"Running agent in '{agent_dir}'...")
     
     # Check if main.py exists
@@ -109,12 +116,61 @@ def run(
         typer.echo(f"Error: {main_py} not found.")
         raise typer.Exit(1)
     
-    # Run the agent
-    try:
-        subprocess.run([sys.executable, main_py], check=True)
-    except subprocess.CalledProcessError as e:
-        typer.echo(f"Error running agent: {e}")
-        raise typer.Exit(1)
+    if local:
+        # Run the agent locally
+        typer.echo("Running agent locally...")
+        try:
+            subprocess.run([sys.executable, main_py], check=True)
+        except subprocess.CalledProcessError as e:
+            typer.echo(f"Error running agent: {e}")
+            raise typer.Exit(1)
+    else:
+        # Run the agent in Daytona
+        typer.echo("Running agent in Daytona remote sandbox...")
+        
+        try:
+            # Try to load environment variables from .env file
+            try:
+                from dotenv import load_dotenv
+                env_file = os.path.join(agent_dir, ".env")
+                if os.path.exists(env_file):
+                    typer.echo(f"Loading environment variables from {env_file}")
+                    load_dotenv(env_file)
+            except ImportError:
+                typer.echo("Warning: python-dotenv not installed. Environment variables may not be loaded.")
+            
+            # Import the DaytonaRuntime
+            from agentscaffold.agent import DaytonaRuntime
+            
+            # Create a runtime instance
+            runtime = DaytonaRuntime()
+            
+            # Prepare input data
+            input_data = {"message": message or "Hello, agent!"}
+            
+            # Execute the agent
+            result = runtime.execute(agent_dir, input_data)
+            
+            # Display the result
+            if "error" in result.get("metadata", {}):
+                typer.echo(f"Error: {result['response']}")
+                raise typer.Exit(1)
+            else:
+                typer.echo("\nAgent Response:")
+                typer.echo(f"  {result['response']}")
+                
+                if result.get("metadata"):
+                    typer.echo("\nMetadata:")
+                    for key, value in result["metadata"].items():
+                        typer.echo(f"  {key}: {value}")
+                        
+        except ImportError as e:
+            typer.echo(f"Error: {e}")
+            typer.echo("Make sure daytona-sdk is installed. Run: pip install daytona-sdk")
+            raise typer.Exit(1)
+        except Exception as e:
+            typer.echo(f"Error running agent in Daytona: {e}")
+            raise typer.Exit(1)
 
 
 @app.command()
