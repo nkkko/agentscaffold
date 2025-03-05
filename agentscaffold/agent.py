@@ -1,5 +1,7 @@
 """Base agent implementation for AgentScaffold."""
 
+import asyncio
+import inspect
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, Any, List, Optional, Callable, Type, ClassVar, Union
 import json
@@ -373,7 +375,7 @@ except Exception as e:
 class Agent(BaseModel):
     """Base agent class for AgentScaffold."""
     
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
     
     name: str
     description: str = ""
@@ -401,7 +403,7 @@ class Agent(BaseModel):
         # Default implementation just echoes the input
         return {"response": f"Received: {input_data['message']}", "metadata": {}}
     
-    def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Run the agent with the provided input data.
         
@@ -415,7 +417,13 @@ class Agent(BaseModel):
         validated_input = self.input_class(**input_data).model_dump()
         
         # Execute agent using runtime
-        result = self.runtime.execute(self.process, validated_input)
+        # Check if process is an asynchronous function
+        if inspect.iscoroutinefunction(self.process):
+            result = await self.process(validated_input)
+        else:
+            # Run the synchronous process in a thread
+            result = await asyncio.to_thread(self.runtime.execute, self.process, validated_input)
+        
         
         # Validate output
         output = self.output_class(**result)

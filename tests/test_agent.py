@@ -1,10 +1,9 @@
 """Tests for the agent module."""
 
-import pytest
+import asyncio
 import os
 import unittest.mock
 from agentscaffold.agent import Agent, AgentInput, AgentOutput, DaytonaRuntime
-
 
 def test_agent_initialization():
     """Test that the agent initializes correctly."""
@@ -28,24 +27,23 @@ def test_agent_output_validation():
     assert agent_output.response == "Hello back"
     assert agent_output.metadata == {"processed": True}
 
-
 def test_agent_run():
     """Test that the agent runs correctly."""
     # Create a mock runtime to avoid Daytona SDK import
     mock_runtime = unittest.mock.MagicMock()
     mock_runtime.execute.return_value = {"response": "Received: Hello", "metadata": {}}
-    
+
     # Create an agent with the mock runtime
     agent = Agent(name="TestAgent", runtime=mock_runtime)
-    
+
     # Run the agent
-    result = agent.run({"message": "Hello"})
-    
+    result = asyncio.run(agent.run({"message": "Hello"}))
+
     # Check that the agent returned the expected result
     assert "response" in result
     assert "metadata" in result
     assert "Received: Hello" in result["response"]
-    
+
     # Verify that the runtime's execute method was called with the right arguments
     mock_runtime.execute.assert_called_once()
     args, _ = mock_runtime.execute.call_args
