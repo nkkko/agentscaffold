@@ -1,8 +1,7 @@
 """Tests for the agent module."""
 
-import pytest
+import asyncio
 from agentscaffold.agent import Agent, AgentInput, AgentOutput, DaytonaRuntime
-
 
 def test_agent_initialization():
     """Test that the agent initializes correctly."""
@@ -26,11 +25,10 @@ def test_agent_output_validation():
     assert agent_output.response == "Hello back"
     assert agent_output.metadata == {"processed": True}
 
-
 def test_agent_run():
     """Test that the agent runs correctly."""
     agent = Agent(name="TestAgent")
-    result = agent.run({"message": "Hello"})
+    result = asyncio.run(agent.run({"message": "Hello"}))
     assert "response" in result
     assert "metadata" in result
     assert "Received: Hello" in result["response"]
