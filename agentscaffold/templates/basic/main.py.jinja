@@ -18,6 +18,7 @@ async def main():
     # Alternatively, you can set them here:
     # os.environ["DAYTONA_API_KEY"] = "your-api-key"
     # os.environ["DAYTONA_SERVER_URL"] = "your-server-url"
+    # os.environ["DAYTONA_TARGET"] = "us"
     
     # Demo message
     message = "Hello, I'd like to know more about {{agent_name}}."
@@ -34,6 +35,9 @@ async def main():
         print("\nMetadata:")
         for key, value in result['metadata'].items():
             print(f"  {key}: {value}")
+    
+    # Return the result for Daytona runtime
+    return result
 
 
 if __name__ == "__main__":
