@@ -12,4 +12,5 @@ agentscaffold.egg-info/requires.txt
 agentscaffold.egg-info/top_level.txt
 tests/test_agent.py
 tests/test_cli.py
+tests/test_installation.py
 tests/test_scaffold.py
