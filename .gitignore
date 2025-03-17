@@ -31,5 +31,4 @@ build/
 
 # Local development settings
 .env
-.env2
 *.log

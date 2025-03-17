@@ -58,6 +58,25 @@ def run_command_with_spinner(command, cwd, start_message, success_message, error
     except FileNotFoundError:
         spinner.fail(f"Error: Command not found: {command[0]}")
         raise typer.Exit(1)
+def run_command_with_spinner(command, cwd, start_message, success_message, error_message):
+    """Helper function to run a command with a loading spinner."""
+    if HAS_HALO:
+        spinner = Halo(text=start_message, spinner='dots')
+        spinner.start()
+    else:
+        print(start_message)
+        spinner = Halo(text=start_message)  # Using our fallback
+
+    try:
+        subprocess.run(command, cwd=cwd, check=True, capture_output=True)
+        spinner.succeed(success_message)
+    except subprocess.CalledProcessError as e:
+        spinner.fail(error_message)
+        typer.echo(f"Error details: {e.stderr.decode() if e.stderr else e}")
+        raise typer.Exit(1)
+    except FileNotFoundError:
+        spinner.fail(f"Error: Command not found: {command[0]}")
+        raise typer.Exit(1)
 
 @app.command()
 def new(
@@ -140,7 +159,58 @@ def new(
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
 
+        pass
+
     if has_uv and not skip_install:
+        typer.echo(f"🛠️ Setting up virtual environment with {typer.style('UV', fg=typer.colors.CYAN)}...")
+        run_command_with_spinner(
+            command=["uv", "venv", ".venv"],
+            cwd=agent_dir,
+            start_message="Creating virtual environment...",
+            success_message=f"✅ Virtual environment created with {typer.style('UV', fg=typer.colors.CYAN)}",
+            error_message=f"❌ Failed to set up virtual environment with {typer.style('UV', fg=typer.colors.CYAN)}"
+        )
+
+        # Install local AgentScaffold package
+        agent_scaffold_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        run_command_with_spinner(
+            command=["uv", "pip", "install", "-e", agent_scaffold_dir],
+            cwd=agent_dir,
+            start_message="Installing local AgentScaffold package...",
+            success_message=f"✅ Local AgentScaffold package installed",
+            error_message=f"⚠️ Warning: Failed to install local AgentScaffold package"
+        )
+
+        # Install agent package
+        run_command_with_spinner(
+            command=["uv", "pip", "install", "-e", "."],
+            cwd=agent_dir,
+            start_message="Installing agent package...",
+            success_message=f"✅ Agent package installed",
+            error_message=f"⚠️ Warning: Failed to install agent package"
+        )
+    elif not skip_install:
+        typer.echo(f"🛠️ Setting up virtual environment with {typer.style('venv', fg=typer.colors.YELLOW)} and {typer.style('pip', fg=typer.colors.YELLOW)}...")
+        run_command_with_spinner(
+            command=["python", "-m", "venv", ".venv"],
+            cwd=agent_dir,
+            start_message="Creating virtual environment...",
+            success_message=f"✅ Virtual environment created with {typer.style('venv', fg=typer.colors.YELLOW)}",
+            error_message=f"⚠️ Warning: Failed to set up virtual environment with {typer.style('venv', fg=typer.colors.YELLOW)}"
+        )
+        venv_activate_command = ".venv\\Scripts\\activate" if sys.platform == "win32" else "source .venv/bin/activate"
+
+        # Install agent package using pip (after venv setup)
+        run_command_with_spinner(
+            command=[sys.executable, "-m", "pip", "install", "-e", "."],
+            cwd=agent_dir,
+            start_message="Installing agent package with pip...",
+            success_message=f"✅ Agent package installed with {typer.style('pip', fg=typer.colors.YELLOW)}",
+            error_message=f"⚠️ Warning: Failed to install agent package with {typer.style('pip', fg=typer.colors.YELLOW)}"
+        )
+
+    typer.echo(f"🎉 Agent '{typer.style(name, bold=True)}' created successfully! 🎉")
+    typer.echo("\nNext steps:")
         typer.echo(f"🛠️ Setting up virtual environment with {typer.style('UV', fg=typer.colors.CYAN)}...")
         run_command_with_spinner(
             command=["uv", "venv", ".venv"],
@@ -200,12 +270,16 @@ def new(
         typer.echo(f"  {typer.style(install_cmd, fg=typer.colors.CYAN)}")
     else:
         typer.echo(f"  # Setup virtual environment and install dependencies if skipped:")
+        typer.echo(f"  # Setup virtual environment and install dependencies if skipped:")
         typer.echo(f"  python -m venv .venv")
         if sys.platform == "win32":
             typer.echo(f"  .venv\\Scripts\\activate")
         else:
             typer.echo(f"  source .venv/bin/activate")
         typer.echo(f"  pip install -e .")
+
+    typer.echo(f"  # Run the agent:")
+    typer.echo(f"  {typer.style('python main.py', fg=typer.colors.CYAN)}")
 
     typer.echo(f"  # Run the agent:")
     typer.echo(f"  {typer.style('python main.py', fg=typer.colors.CYAN)}")
@@ -265,6 +339,7 @@ def run(
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
+        typer.echo(f"🔥 Error running agent: {typer.style(str(e), fg=typer.colors.RED)}")
         typer.echo(f"🔥 Error running agent: {typer.style(str(e), fg=typer.colors.RED)}")
         raise typer.Exit(1)
 

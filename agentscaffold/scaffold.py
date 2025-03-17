@@ -436,6 +436,7 @@ def create_new_agent(
     """
     Create a new agent with the specified name and template.
 
+
     Args:
         name: Name of the agent to create
         template: Template to use (default: basic)
@@ -453,6 +454,7 @@ def create_new_agent(
     # Create agent directory
     agent_dir = os.path.join(output_dir, name)
     os.makedirs(agent_dir, exist_ok=True)
+
 
     # Create package directory
     package_dir = os.path.join(agent_dir, settings["package_name"])
@@ -514,11 +516,14 @@ def create_new_agent(
 def _render_template_file(
     template_path: str,
     output_dir: str,
+    template_path: str,
+    output_dir: str,
     context: Dict[str, Any],
     is_package_file: bool = False,
 ) -> None:
     """
     Render a single template file and write it to the output directory.
+
 
     Args:
         template_path: Path to the template file
@@ -530,17 +535,21 @@ def _render_template_file(
     with open(template_path, 'r') as f:
         template_content = f.read()
 
+
     # Render the template
     env = jinja2.Environment()
     template = env.from_string(template_content)
     rendered_content = template.render(**context)
+
 
     # Determine the output file path
     file_name = os.path.basename(template_path)
     if file_name.endswith('.jinja'):
         file_name = file_name[:-6]  # Remove .jinja extension
 
+
     output_file_path = os.path.join(output_dir, file_name)
+
 
     # Write the rendered content to the output file
     with open(output_file_path, 'w') as f:
