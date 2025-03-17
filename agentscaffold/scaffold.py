@@ -516,11 +516,9 @@ def create_new_agent(
 def _render_template_file(
     template_path: str,
     output_dir: str,
-    template_path: str,
-    output_dir: str,
     context: Dict[str, Any],
     is_package_file: bool = False,
-) -> None:
+    ) -> None:
     """
     Render a single template file and write it to the output directory.
 

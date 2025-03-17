@@ -209,8 +209,8 @@ def new(
             error_message=f"⚠️ Warning: Failed to install agent package with {typer.style('pip', fg=typer.colors.YELLOW)}"
         )
 
-    typer.echo(f"🎉 Agent '{typer.style(name, bold=True)}' created successfully! 🎉")
-    typer.echo("\nNext steps:")
+        typer.echo(f"🎉 Agent '{typer.style(name, bold=True)}' created successfully! 🎉")
+        typer.echo("\nNext steps:")
         typer.echo(f"🛠️ Setting up virtual environment with {typer.style('UV', fg=typer.colors.CYAN)}...")
         run_command_with_spinner(
             command=["uv", "venv", ".venv"],
