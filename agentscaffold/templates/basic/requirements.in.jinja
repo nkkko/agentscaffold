@@ -3,3 +3,49 @@ pydantic>=2.0.0
 agentscaffold
 pydantic-ai
 daytona-sdk
+python-dotenv
+
+{% if llm_provider == "openai" %}
+openai>=1.0.0
+{% elif llm_provider == "anthropic" %}
+anthropic>=0.5.0
+{% elif llm_provider == "huggingface" %}
+huggingface_hub>=0.16.0
+{% elif llm_provider == "ollama" %}
+ollama>=0.1.0
+{% endif %}
+
+{% if search_provider == "brave" %}
+# Brave Search API
+brave-search>=0.1.0
+{% elif search_provider == "browserbase" %}
+# BrowserBase API
+browserbase>=0.1.0
+{% endif %}
+
+{% if memory_provider == "supabase" %}
+# Supabase Vector DB
+supabase>=0.7.0
+{% elif memory_provider == "milvus" %}
+# Milvus Vector DB
+pymilvus>=2.2.0
+{% elif memory_provider == "chromadb" %}
+# ChromaDB Vector DB
+chromadb>=0.4.0
+{% endif %}
+
+{% if logging_provider == "logfire" %}
+# LogFire observability
+logfire>=0.1.0
+{% endif %}
+
+{% for dep in dependencies %}
+{% if dep not in ["pydantic>=2.0.0", "agentscaffold", "pydantic-ai", "daytona-sdk", "python-dotenv"] and 
+      dep != "openai>=1.0.0" and dep != "anthropic>=0.5.0" and 
+      dep != "huggingface_hub>=0.16.0" and dep != "ollama>=0.1.0" and
+      dep != "brave-search>=0.1.0" and dep != "browserbase>=0.1.0" and
+      dep != "supabase>=0.7.0" and dep != "pymilvus>=2.2.0" and
+      dep != "chromadb>=0.4.0" and dep != "logfire>=0.1.0" %}
+{{ dep }}
+{% endif %}
+{% endfor %}

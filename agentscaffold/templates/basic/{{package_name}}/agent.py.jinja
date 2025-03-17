@@ -2,7 +2,7 @@
 
 import os
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent as PydanticAgent
@@ -13,6 +13,13 @@ class {{agent_class_name}}Input(AgentInput):
     """Input for {{agent_class_name}} agent."""
     
     # Add custom input fields here
+    {% if search_provider != "none" %}
+    search_query: Optional[str] = Field(None, description="Optional search query")
+    {% endif %}
+    {% if memory_provider != "none" %}
+    retrieve_context: bool = Field(default=False, description="Whether to retrieve context from memory")
+    context_query: Optional[str] = Field(None, description="Optional query for retrieving context")
+    {% endif %}
     pass
 
 
@@ -20,6 +27,12 @@ class {{agent_class_name}}Output(AgentOutput):
     """Output for {{agent_class_name}} agent."""
     
     # Add custom output fields here
+    {% if search_provider != "none" %}
+    search_results: Optional[List[Dict[str, Any]]] = Field(None, description="Search results if any")
+    {% endif %}
+    {% if memory_provider != "none" %}
+    context: Optional[List[Dict[str, Any]]] = Field(None, description="Retrieved context if any")
+    {% endif %}
     pass
 
 
@@ -42,13 +55,192 @@ class Agent(BaseAgent):
         super().__init__(**data)
         # Initialize Pydantic AI agent
         self.pydantic_agent = PydanticAgent(
+            {% if llm_provider == "openai" %}
             "openai:gpt-4o",  # Can be configured via environment variables
+            {% elif llm_provider == "anthropic" %}
+            "anthropic:claude-3-opus-20240229",  # Can be configured via environment variables
+            {% elif llm_provider == "daytona" %}
+            "daytona:openai/gpt-4o",  # Can be configured via environment variables
+            {% elif llm_provider == "huggingface" %}
+            "huggingface:mistralai/Mistral-7B-Instruct-v0.2",  # Can be configured via environment variables
+            {% elif llm_provider == "ollama" %}
+            "ollama:llama3",  # Can be configured via environment variables
+            {% else %}
+            "openai:gpt-4o",  # Can be configured via environment variables
+            {% endif %}
             result_type={{agent_class_name}}PydanticResult,
             system_prompt=(
                 "You are {{agent_class_name}}, an AI assistant designed to help with "
                 "{{agent_name}}. Be helpful, concise, and accurate in your responses."
             )
         )
+        
+        {% if search_provider != "none" %}
+        # Initialize search provider
+        self.search = self._init_search()
+        {% endif %}
+        
+        {% if memory_provider != "none" %}
+        # Initialize memory provider
+        self.memory = self._init_memory()
+        {% endif %}
+        
+        {% if logging_provider != "none" %}
+        # Initialize logging provider
+        self.logging = self._init_logging()
+        {% endif %}
+    
+    {% if search_provider != "none" %}
+    def _init_search(self):
+        """Initialize search provider."""
+        try:
+            {% if search_provider == "brave" %}
+            from brave_search import BraveSearch
+            api_key = os.getenv("BRAVE_API_KEY")
+            if api_key:
+                return BraveSearch(api_key=api_key)
+            {% elif search_provider == "browserbase" %}
+            from browserbase import BrowserBase
+            api_key = os.getenv("BROWSERBASE_API_KEY")
+            if api_key:
+                return BrowserBase(api_key=api_key)
+            {% endif %}
+        except ImportError:
+            print(f"Warning: {search_provider} package not installed. Search functionality disabled.")
+        return None
+    
+    async def search_web(self, query: str) -> List[Dict[str, Any]]:
+        """Search the web for information."""
+        if not self.search or not query:
+            return []
+        
+        try:
+            {% if search_provider == "brave" %}
+            results = await self.search.search(query, count=5)
+            return [
+                {"title": r.title, "url": r.url, "description": r.description}
+                for r in results.web.results
+            ]
+            {% elif search_provider == "browserbase" %}
+            results = await self.search.search(query, limit=5)
+            return [
+                {"title": r.title, "url": r.url, "description": r.snippet}
+                for r in results
+            ]
+            {% endif %}
+        except Exception as e:
+            print(f"Search error: {str(e)}")
+            return []
+    {% endif %}
+    
+    {% if memory_provider != "none" %}
+    def _init_memory(self):
+        """Initialize memory provider."""
+        try:
+            {% if memory_provider == "supabase" %}
+            from supabase import create_client
+            url = os.getenv("SUPABASE_URL")
+            key = os.getenv("SUPABASE_KEY")
+            if url and key:
+                return create_client(url, key)
+            {% elif memory_provider == "milvus" %}
+            from pymilvus import connections, Collection
+            uri = os.getenv("MILVUS_URI")
+            if uri:
+                connections.connect(uri=uri)
+                return Collection("agent_memory")
+            {% elif memory_provider == "chromadb" %}
+            import chromadb
+            db_path = os.getenv("CHROMA_DB_PATH", "./chroma_db")
+            client = chromadb.PersistentClient(path=db_path)
+            return client.get_or_create_collection("agent_memory")
+            {% endif %}
+        except ImportError:
+            print(f"Warning: {memory_provider} package not installed. Memory functionality disabled.")
+        return None
+    
+    async def retrieve_from_memory(self, query: str) -> List[Dict[str, Any]]:
+        """Retrieve context from memory."""
+        if not self.memory or not query:
+            return []
+        
+        try:
+            {% if memory_provider == "supabase" %}
+            # Using pgvector via Supabase
+            # This assumes you have a properly set up table and embedding function
+            embedding = await self._get_embedding(query)
+            result = self.memory.table("memories").select("*").execute()
+            return result.data
+            {% elif memory_provider == "milvus" %}
+            # Using Milvus
+            embedding = await self._get_embedding(query)
+            search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
+            results = self.memory.search(
+                data=[embedding],
+                anns_field="embedding",
+                param=search_params,
+                limit=5,
+                output_fields=["text", "metadata"],
+            )
+            return [hit.__dict__ for hit in results[0]]
+            {% elif memory_provider == "chromadb" %}
+            # Using ChromaDB
+            results = self.memory.query(
+                query_texts=[query],
+                n_results=5,
+            )
+            items = []
+            for i in range(len(results["ids"][0])):
+                items.append({
+                    "id": results["ids"][0][i],
+                    "text": results["documents"][0][i],
+                    "metadata": results["metadatas"][0][i],
+                })
+            return items
+            {% endif %}
+        except Exception as e:
+            print(f"Memory retrieval error: {str(e)}")
+            return []
+    
+    async def _get_embedding(self, text: str) -> List[float]:
+        """Get embedding for text using OpenAI or local alternative."""
+        try:
+            import openai
+            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text,
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            print(f"Embedding error: {str(e)}")
+            # Return a zero vector as fallback (not ideal but prevents crashes)
+            return [0.0] * 1536
+    {% endif %}
+    
+    {% if logging_provider != "none" %}
+    def _init_logging(self):
+        """Initialize logging provider."""
+        try:
+            {% if logging_provider == "logfire" %}
+            import logfire
+            api_key = os.getenv("LOGFIRE_API_KEY")
+            if api_key:
+                logfire.init(api_key=api_key)
+                return logfire
+            {% endif %}
+        except ImportError:
+            print(f"Warning: {logging_provider} package not installed. Logging functionality disabled.")
+        return None
+    
+    def log_event(self, event_name: str, **kwargs):
+        """Log an event with the logging provider."""
+        if self.logging:
+            try:
+                self.logging.info(event_name, **kwargs)
+            except Exception as e:
+                print(f"Logging error: {str(e)}")
+    {% endif %}
     
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -61,15 +253,100 @@ class Agent(BaseAgent):
             Agent output
         """
         try:
-            # Process with Pydantic AI
-            result = await self.pydantic_agent.run(input_data['message'])
+            metadata = {}
             
-            # Return response
-            return {
+            {% if logging_provider != "none" %}
+            # Log the request
+            self.log_event("agent_request", input=input_data["message"])
+            {% endif %}
+            
+            {% if search_provider != "none" %}
+            # Handle search if requested
+            search_results = []
+            if "search_query" in input_data and input_data["search_query"]:
+                search_query = input_data["search_query"]
+                {% if logging_provider != "none" %}
+                self.log_event("search_request", query=search_query)
+                {% endif %}
+                search_results = await self.search_web(search_query)
+                metadata["search_results"] = search_results
+            {% endif %}
+            
+            {% if memory_provider != "none" %}
+            # Handle memory retrieval if requested
+            context = []
+            if input_data.get("retrieve_context", False):
+                context_query = input_data.get("context_query", input_data["message"])
+                {% if logging_provider != "none" %}
+                self.log_event("memory_request", query=context_query)
+                {% endif %}
+                context = await self.retrieve_from_memory(context_query)
+                metadata["context"] = context
+            {% endif %}
+            
+            # Build enhanced prompt with context and search results
+            enhanced_message = input_data["message"]
+            
+            {% if search_provider != "none" or memory_provider != "none" %}
+            context_additions = []
+            
+            {% if search_provider != "none" %}
+            if search_results:
+                search_context = "\n\nSearch Results:\n"
+                for i, result in enumerate(search_results[:3]):  # Limit to top 3 results
+                    search_context += f"{i+1}. {result['title']} - {result['url']}\n{result['description']}\n"
+                context_additions.append(search_context)
+            {% endif %}
+            
+            {% if memory_provider != "none" %}
+            if context:
+                memory_context = "\n\nRelevant Context:\n"
+                for i, item in enumerate(context[:3]):  # Limit to top 3 items
+                    if "text" in item:
+                        memory_context += f"{i+1}. {item['text']}\n"
+                    elif "content" in item:
+                        memory_context += f"{i+1}. {item['content']}\n"
+                context_additions.append(memory_context)
+            {% endif %}
+            
+            if context_additions:
+                enhanced_message = enhanced_message + "\n\n" + "\n".join(context_additions)
+            {% endif %}
+            
+            # Process with Pydantic AI
+            result = await self.pydantic_agent.run(enhanced_message)
+            
+            {% if logging_provider != "none" %}
+            # Log the response
+            self.log_event("agent_response", response=result.data.message)
+            {% endif %}
+            
+            # Return response with metadata
+            response = {
                 "response": result.data.message,
-                "metadata": result.data.additional_info
+                "metadata": {**result.data.additional_info, **metadata}
             }
+            
+            {% if search_provider != "none" %}
+            # Include search results in the output if available
+            if search_results:
+                response["search_results"] = search_results
+            {% endif %}
+            
+            {% if memory_provider != "none" %}
+            # Include context in the output if available
+            if context:
+                response["context"] = context
+            {% endif %}
+            
+            return response
+            
         except Exception as e:
+            {% if logging_provider != "none" %}
+            # Log the error
+            self.log_event("agent_error", error=str(e))
+            {% endif %}
+            
             # Handle any errors
             return {
                 "response": f"Error: {str(e)}",

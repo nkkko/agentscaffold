@@ -12,6 +12,34 @@ dependencies = [
     "agentscaffold",
     "pydantic-ai",
     "daytona-sdk",
+    "python-dotenv",
+{% if llm_provider == "openai" %}
+    "openai>=1.0.0",
+{% elif llm_provider == "anthropic" %}
+    "anthropic>=0.5.0",
+{% elif llm_provider == "huggingface" %}
+    "huggingface_hub>=0.16.0",
+{% elif llm_provider == "ollama" %}
+    "ollama>=0.1.0",
+{% endif %}
+
+{% if search_provider == "brave" %}
+    "brave-search>=0.1.0",
+{% elif search_provider == "browserbase" %}
+    "browserbase>=0.1.0",
+{% endif %}
+
+{% if memory_provider == "supabase" %}
+    "supabase>=0.7.0",
+{% elif memory_provider == "milvus" %}
+    "pymilvus>=2.2.0",
+{% elif memory_provider == "chromadb" %}
+    "chromadb>=0.4.0",
+{% endif %}
+
+{% if logging_provider == "logfire" %}
+    "logfire>=0.1.0",
+{% endif %}
 ]
 
 [tool.black]

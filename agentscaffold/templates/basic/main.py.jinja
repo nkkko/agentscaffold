@@ -3,6 +3,7 @@
 import os
 import json
 import asyncio
+import argparse
 from {{package_name}} import Agent
 from dotenv import load_dotenv
 
@@ -12,28 +13,124 @@ load_dotenv()
 
 async def main():
     """Run the agent."""
+    parser = argparse.ArgumentParser(description="Run the {{agent_name}} agent")
+    parser.add_argument("--message", "-m", type=str, help="Message to process")
+    parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
+    {% if search_provider != "none" %}
+    parser.add_argument("--search", "-s", type=str, help="Search query to run")
+    {% endif %}
+    {% if memory_provider != "none" %}
+    parser.add_argument("--context", "-c", action="store_true", help="Retrieve context from memory")
+    parser.add_argument("--context-query", type=str, help="Query for retrieving context")
+    {% endif %}
+    args = parser.parse_args()
+
     agent = Agent()
     
-    # Set your Daytona environment variables in .env file
-    # Alternatively, you can set them here:
-    # os.environ["DAYTONA_API_KEY"] = "your-api-key"
-    # os.environ["DAYTONA_SERVER_URL"] = "your-server-url"
+    # If interactive mode, run conversation loop
+    if args.interactive:
+        print("Welcome to {{agent_name}} agent. Type 'exit' to quit.")
+        while True:
+            message = input("\nYou: ")
+            if message.lower() == "exit":
+                break
+            
+            input_data = {"message": message}
+            
+            {% if search_provider != "none" %}
+            search_query = input("Search query (optional, press Enter to skip): ")
+            if search_query:
+                input_data["search_query"] = search_query
+            {% endif %}
+            
+            {% if memory_provider != "none" %}
+            retrieve_context = input("Retrieve context from memory? (y/N): ").lower().startswith("y")
+            if retrieve_context:
+                input_data["retrieve_context"] = True
+                context_query = input("Context query (optional, press Enter to use message): ")
+                if context_query:
+                    input_data["context_query"] = context_query
+            {% endif %}
+            
+            print("\nProcessing...")
+            result = await agent.run(input_data)
+            
+            print("\nResponse:")
+            print(f"  {result['response']}")
+            
+            {% if search_provider != "none" %}
+            if "search_results" in result and result['search_results']:
+                print("\nSearch Results:")
+                for i, item in enumerate(result['search_results'][:3]):
+                    print(f"  {i+1}. {item['title']} - {item['url']}")
+            {% endif %}
+            
+            {% if memory_provider != "none" %}
+            if "context" in result and result['context']:
+                print("\nRetrieved Context:")
+                for i, item in enumerate(result['context'][:3]):
+                    if "text" in item:
+                        print(f"  {i+1}. {item['text'][:100]}...")
+                    elif "content" in item:
+                        print(f"  {i+1}. {item['content'][:100]}...")
+            {% endif %}
+        return {"response": "Interactive session ended", "metadata": {}}
     
-    # Demo message
-    message = "Hello, I'd like to know more about {{agent_name}}."
+    # Process a single message
+    message = args.message or "Hello, I'd like to know more about {{agent_name}}."
     
-    print(f"Sending message: {message}")
+    print(f"Processing message: {message}")
+    
+    input_data = {"message": message}
+    
+    {% if search_provider != "none" %}
+    if args.search:
+        input_data["search_query"] = args.search
+        print(f"Including search query: {args.search}")
+    {% endif %}
+    
+    {% if memory_provider != "none" %}
+    if args.context:
+        input_data["retrieve_context"] = True
+        if args.context_query:
+            input_data["context_query"] = args.context_query
+            print(f"Retrieving context with query: {args.context_query}")
+        else:
+            print("Retrieving context based on message")
+    {% endif %}
+    
     print("Processing with {{agent_class_name}} agent...")
     
-    result = await agent.run({"message": message})
+    result = await agent.run(input_data)
     
     print("\nResponse:")
     print(f"  {result['response']}")
     
-    if result['metadata']:
-        print("\nMetadata:")
+    {% if search_provider != "none" %}
+    if "search_results" in result and result['search_results']:
+        print("\nSearch Results:")
+        for i, item in enumerate(result['search_results'][:3]):
+            print(f"  {i+1}. {item['title']} - {item['url']}")
+    {% endif %}
+    
+    {% if memory_provider != "none" %}
+    if "context" in result and result['context']:
+        print("\nRetrieved Context:")
+        for i, item in enumerate(result['context'][:3]):
+            if "text" in item:
+                print(f"  {i+1}. {item['text'][:100]}...")
+            elif "content" in item:
+                print(f"  {i+1}. {item['content'][:100]}...")
+    {% endif %}
+    
+    if result['metadata'] and any(k != "search_results" and k != "context" for k in result['metadata']):
+        print("\nAdditional Information:")
         for key, value in result['metadata'].items():
-            print(f"  {key}: {value}")
+            if key != "search_results" and key != "context":
+                print(f"  {key}: {value}")
+    
+    # Return the result for Daytona runtime
+    return result
 
 
 if __name__ == "__main__":
