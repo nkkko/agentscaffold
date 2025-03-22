@@ -1,13 +1,10 @@
-Metadata-Version: 2.2
+Metadata-Version: 2.4
 Name: agentscaffold
 Version: 0.1.0
 Summary: A framework for scaffolding AI agents using Pydantic and Daytona
-Author-email: AgentScaffold Team <your.email@example.com>
 License: MIT
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
-Requires-Dist: typer>=0.9.0
-Requires-Dist: halo>=0.0.31
 Requires-Dist: typer>=0.9.0
 Requires-Dist: halo>=0.0.31
 Requires-Dist: pydantic>=2.0.0
@@ -15,7 +12,6 @@ Requires-Dist: spinners>=0.0.24
 Requires-Dist: termcolor>=2.3.0
 Requires-Dist: log-symbols>=0.0.14
 Requires-Dist: jinja2>=3.0.0
-Requires-Dist: python-dotenv>=1.0.0
 Provides-Extra: dev
 Requires-Dist: pytest>=7.0.0; extra == "dev"
 Requires-Dist: black>=23.0.0; extra == "dev"
