@@ -1,137 +1,200 @@
 """Main entry point for {{agent_name}} agent."""
 
-import os
-import json
 import asyncio
+import json
+import os
+import sys
+from typing import Dict, Any, Optional
 import argparse
-from {{package_name}} import Agent
-from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Add the current directory to the path to help with imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# Try to load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("Loaded environment variables from .env file")
+except ImportError:
+    print("Warning: python-dotenv not installed, using environment variables directly")
+
+# Import the agent with error handling
+try:
+    print(f"Importing agent from {{package_name}}.agent")
+    from {{package_name}}.agent import Agent
+    print(f"Successfully imported Agent from {{package_name}}.agent")
+except ImportError as e:
+    print(f"Error importing Agent from {{package_name}}.agent: {e}")
+    
+    # Try alternative import
+    try:
+        print("Trying to import Agent from agent.py directly")
+        from agent import Agent
+        print("Successfully imported Agent from agent.py")
+    except ImportError as e2:
+        print(f"Could not import Agent from agent.py either: {e2}")
+        sys.exit(1)
+
+async def process_message(agent: Agent, message: str, search_query: Optional[str] = None, 
+                        context: bool = False, context_query: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Process a message with the agent.
+    
+    Args:
+        agent: Agent instance
+        message: Message to process
+        search_query: Optional search query to include with the message
+        context: Whether to retrieve context from memory
+        context_query: Optional query for context retrieval
+        
+    Returns:
+        Agent response
+    """
+    # Create input data
+    input_data = {
+        "message": message,
+        "context": {}
+    }
+    
+    # Add search query if provided
+    if search_query:
+        input_data["context"]["search_query"] = search_query
+    
+    # Add context retrieval if requested
+    if context:
+        input_data["context"]["retrieve_context"] = True
+        if context_query:
+            input_data["context"]["context_query"] = context_query
+    
+    # Process message
+    print(f"Processing message: {message[:50]}...")
+    print(f"Processing with {agent.name} agent...")
+    
+    # Run the agent
+    try:
+        result = await agent.run(input_data)
+        return result
+    except Exception as e:
+        print(f"Error running agent: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Fallback response
+        return {
+            "response": f"I encountered an error processing your request: {str(e)}",
+            "metadata": {"error": True}
+        }
+
+async def interactive_mode(agent: Agent):
+    """Run the agent in interactive mode."""
+    print(f"Starting interactive session with {agent.name}...")
+    print(f"Type 'exit' or 'quit' to end the session")
+    print(f"Type 'search: <query>' to include a search query")
+    print(f"Type 'context: <query>' to retrieve context")
+    print()
+    
+    while True:
+        # Get input from the user
+        user_input = input("> ")
+        
+        # Check for exit command
+        if user_input.lower() in ["exit", "quit"]:
+            print("Exiting interactive session")
+            break
+        
+        # Check for search command
+        search_query = None
+        if user_input.lower().startswith("search: "):
+            search_query = user_input[8:].strip()
+            user_input = input("Message: ")
+        
+        # Check for context command
+        context = False
+        context_query = None
+        if user_input.lower().startswith("context: "):
+            context = True
+            context_query = user_input[9:].strip()
+            user_input = input("Message: ")
+        
+        # Process the message
+        result = await process_message(agent, user_input, search_query, context, context_query)
+        
+        # Print the response
+        print(f"\n{result['response']}\n")
 
 async def main():
-    """Run the agent."""
-    parser = argparse.ArgumentParser(description="Run the {{agent_name}} agent")
-    parser.add_argument("--message", "-m", type=str, help="Message to process")
+    """Main entry point."""
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="{{description}}")
+    parser.add_argument("--message", "-m", help="Message to process")
     parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
-    {% if search_provider != "none" %}
-    parser.add_argument("--search", "-s", type=str, help="Search query to run")
-    {% endif %}
-    {% if memory_provider != "none" %}
+    parser.add_argument("--search", "-s", help="Search query")
     parser.add_argument("--context", "-c", action="store_true", help="Retrieve context from memory")
-    parser.add_argument("--context-query", type=str, help="Query for retrieving context")
-    {% endif %}
-    args = parser.parse_args()
-
-    agent = Agent()
+    parser.add_argument("--context-query", help="Query for context retrieval")
     
-    # If interactive mode, run conversation loop
+    args = parser.parse_args()
+    
+    # Initialize the agent
+    try:
+        print("Initializing agent...")
+        agent = Agent()
+        print(f"Agent initialized: {agent.name}")
+        
+        # Set your Daytona environment variables in .env file
+        # Alternatively, you can set them here:
+        # os.environ["DAYTONA_API_KEY"] = "your-api-key"
+        # os.environ["DAYTONA_SERVER_URL"] = "your-server-url"
+        # os.environ["DAYTONA_TARGET"] = "us"
+    except Exception as e:
+        print(f"Error initializing agent: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+    
+    # Run in interactive mode if requested
     if args.interactive:
-        print("Welcome to {{agent_name}} agent. Type 'exit' to quit.")
-        while True:
-            message = input("\nYou: ")
-            if message.lower() == "exit":
-                break
+        await interactive_mode(agent)
+        return
+    
+    # Process a single message if provided
+    if args.message:
+        try:
+            result = await process_message(agent, args.message, args.search, args.context, args.context_query)
+            print("Response:")
+            print(result["response"])
             
-            input_data = {"message": message}
-            
-            {% if search_provider != "none" %}
-            search_query = input("Search query (optional, press Enter to skip): ")
-            if search_query:
-                input_data["search_query"] = search_query
-            {% endif %}
-            
-            {% if memory_provider != "none" %}
-            retrieve_context = input("Retrieve context from memory? (y/N): ").lower().startswith("y")
-            if retrieve_context:
-                input_data["retrieve_context"] = True
-                context_query = input("Context query (optional, press Enter to use message): ")
-                if context_query:
-                    input_data["context_query"] = context_query
-            {% endif %}
-            
-            print("\nProcessing...")
-            result = await agent.run(input_data)
-            
+            # Print additional information if available
+            if "metadata" in result and result["metadata"]:
+                print("\nAdditional Information:")
+                for key, value in result["metadata"].items():
+                    if key != "error":  # Skip error key as it's usually not meaningful to show
+                        print(f"  {key}: {value}")
+        except Exception as e:
+            print(f"Error processing message: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        # If no message or interactive mode, use a demo message
+        demo_message = "Hello, I'd like to know more about {{agent_name}}."
+        print(f"No message provided. Using demo message: {demo_message}")
+        
+        try:
+            result = await process_message(agent, demo_message)
             print("\nResponse:")
             print(f"  {result['response']}")
             
-            {% if search_provider != "none" %}
-            if "search_results" in result and result['search_results']:
-                print("\nSearch Results:")
-                for i, item in enumerate(result['search_results'][:3]):
-                    print(f"  {i+1}. {item['title']} - {item['url']}")
-            {% endif %}
-            
-            {% if memory_provider != "none" %}
-            if "context" in result and result['context']:
-                print("\nRetrieved Context:")
-                for i, item in enumerate(result['context'][:3]):
-                    if "text" in item:
-                        print(f"  {i+1}. {item['text'][:100]}...")
-                    elif "content" in item:
-                        print(f"  {i+1}. {item['content'][:100]}...")
-            {% endif %}
-        return {"response": "Interactive session ended", "metadata": {}}
-    
-    # Process a single message
-    message = args.message or "Hello, I'd like to know more about {{agent_name}}."
-    
-    print(f"Processing message: {message}")
-    
-    input_data = {"message": message}
-    
-    {% if search_provider != "none" %}
-    if args.search:
-        input_data["search_query"] = args.search
-        print(f"Including search query: {args.search}")
-    {% endif %}
-    
-    {% if memory_provider != "none" %}
-    if args.context:
-        input_data["retrieve_context"] = True
-        if args.context_query:
-            input_data["context_query"] = args.context_query
-            print(f"Retrieving context with query: {args.context_query}")
-        else:
-            print("Retrieving context based on message")
-    {% endif %}
-    
-    print("Processing with {{agent_class_name}} agent...")
-    
-    result = await agent.run(input_data)
-    
-    print("\nResponse:")
-    print(f"  {result['response']}")
-    
-    {% if search_provider != "none" %}
-    if "search_results" in result and result['search_results']:
-        print("\nSearch Results:")
-        for i, item in enumerate(result['search_results'][:3]):
-            print(f"  {i+1}. {item['title']} - {item['url']}")
-    {% endif %}
-    
-    {% if memory_provider != "none" %}
-    if "context" in result and result['context']:
-        print("\nRetrieved Context:")
-        for i, item in enumerate(result['context'][:3]):
-            if "text" in item:
-                print(f"  {i+1}. {item['text'][:100]}...")
-            elif "content" in item:
-                print(f"  {i+1}. {item['content'][:100]}...")
-    {% endif %}
-    
-    if result['metadata'] and any(k != "search_results" and k != "context" for k in result['metadata']):
-        print("\nAdditional Information:")
-        for key, value in result['metadata'].items():
-            if key != "search_results" and key != "context":
-                print(f"  {key}: {value}")
+            if result.get('metadata'):
+                print("\nMetadata:")
+                for key, value in result['metadata'].items():
+                    if key != "error":
+                        print(f"  {key}: {value}")
+        except Exception as e:
+            print(f"Error processing demo message: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Return the result for Daytona runtime
     return result
-
 
 if __name__ == "__main__":
     asyncio.run(main())

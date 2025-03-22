@@ -5,16 +5,24 @@ pydantic-ai
 daytona-sdk
 python-dotenv
 
+# LLM Provider
 {% if llm_provider == "openai" %}
+# OpenAI API (GPT-4, etc.)
 openai>=1.0.0
 {% elif llm_provider == "anthropic" %}
+# Anthropic API (Claude)
 anthropic>=0.5.0
 {% elif llm_provider == "huggingface" %}
+# HuggingFace Inference API
 huggingface_hub>=0.16.0
 {% elif llm_provider == "ollama" %}
+# Local LLMs with Ollama
 ollama>=0.1.0
+{% elif llm_provider == "daytona" %}
+# Daytona is already included above
 {% endif %}
 
+# Search Provider
 {% if search_provider == "brave" %}
 # Brave Search API
 brave-search>=0.1.0
@@ -23,6 +31,7 @@ brave-search>=0.1.0
 browserbase>=0.1.0
 {% endif %}
 
+# Memory Provider
 {% if memory_provider == "supabase" %}
 # Supabase Vector DB
 supabase>=0.7.0
@@ -34,18 +43,30 @@ pymilvus>=2.2.0
 chromadb>=0.4.0
 {% endif %}
 
+# Logging Provider
 {% if logging_provider == "logfire" %}
 # LogFire observability
 logfire>=0.1.0
 {% endif %}
 
-{% for dep in dependencies %}
-{% if dep not in ["pydantic>=2.0.0", "agentscaffold", "pydantic-ai", "daytona-sdk", "python-dotenv"] and 
-      dep != "openai>=1.0.0" and dep != "anthropic>=0.5.0" and 
-      dep != "huggingface_hub>=0.16.0" and dep != "ollama>=0.1.0" and
-      dep != "brave-search>=0.1.0" and dep != "browserbase>=0.1.0" and
-      dep != "supabase>=0.7.0" and dep != "pymilvus>=2.2.0" and
-      dep != "chromadb>=0.4.0" and dep != "logfire>=0.1.0" %}
-{{ dep }}
+# Utility Packages
+{% for util in utilities %}
+{% if util == "pypdf" %}
+# PDF parsing utility
+pypdf>=3.0.0
+{% elif util == "puppeteer" %}
+# Headless Chrome/Chromium automation
+pyppeteer>=1.0.0
+{% elif util == "requests" %}
+# HTTP requests library
+requests>=2.0.0
+{% elif util == "beautifulsoup" %}
+# HTML parsing library
+beautifulsoup4>=4.0.0
+{% elif util == "playwright" %}
+# Browser automation library
+playwright>=1.0.0
+{% elif util == "dotenv" %}
+# python-dotenv is already included above
 {% endif %}
 {% endfor %}

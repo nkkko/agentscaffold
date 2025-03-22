@@ -9,12 +9,7 @@ description = "A framework for scaffolding AI agents using Pydantic and Daytona"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [
-    {name = "AgentScaffold Team", email = "your.email@example.com"},
-]
 dependencies = [
-    "typer>=0.9.0",
-    "halo>=0.0.31",
     "typer>=0.9.0",
     "halo>=0.0.31",
     "pydantic>=2.0.0",
@@ -22,7 +17,6 @@ dependencies = [
     "termcolor>=2.3.0",
     "log-symbols>=0.0.14",
     "jinja2>=3.0.0",
-    "python-dotenv>=1.0.0"
 ]
 
 [project.optional-dependencies]

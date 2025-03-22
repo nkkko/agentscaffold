@@ -2,11 +2,118 @@
 
 import os
 import json
-from typing import Dict, Any, Optional, List
+import inspect
+from typing import Dict, Any, Optional, List, ClassVar, Type
 
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent as PydanticAgent
-from agentscaffold.agent import Agent as BaseAgent, AgentInput, AgentOutput
+from pydantic import BaseModel, Field, ConfigDict
+
+# Try to import from agentscaffold, but provide fallbacks if not available
+try:
+    from agentscaffold.agent import Agent as BaseAgent, AgentInput, AgentOutput, DaytonaRuntime
+    from pydantic_ai import Agent as PydanticAgent
+except ImportError:
+    # Fallback if agentscaffold is not available
+    class AgentInput(BaseModel):
+        """Base class for agent inputs."""
+        message: str = Field(..., description="Input message for the agent")
+        context: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
+
+    class AgentOutput(BaseModel):
+        """Base class for agent outputs."""
+        response: str = Field(..., description="Response from the agent")
+        metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+
+    class DaytonaRuntime:
+        """Minimal DaytonaRuntime implementation."""
+        async def execute(self, agent_dir, input_data):
+            return {
+                "response": f"Daytona execution failed: agentscaffold not available.",
+                "metadata": {"error": True}
+            }
+
+    class BaseAgent(BaseModel):
+        """Minimal base agent implementation."""
+        model_config = ConfigDict(arbitrary_types_allowed=True)
+        
+        name: str = "MinimalAgent"
+        description: str = ""
+        runtime: Optional[Any] = None
+        
+        def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+            """Process input data and generate output."""
+            return {"response": f"Processed: {input_data['message']}", "metadata": {}}
+        
+        async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+            """Run the agent with the provided input data."""
+            if isinstance(input_data, str):
+                input_data = {"message": input_data}
+                
+            # Create a simple validated input
+            validated_input = {"message": input_data.get("message", ""), "context": input_data.get("context", {})}
+            
+            # Process the input
+            result = self.process(validated_input)
+            
+            # Return the result as a dict
+            return result
+    
+    # Fallback minimal PydanticAgent
+    class PydanticAgent:
+        """Minimal PydanticAgent implementation when pydantic_ai is not available."""
+        
+        def __init__(self, model_name, result_type=None, system_prompt=None):
+            self.model_name = model_name
+            self.result_type = result_type
+            self.system_prompt = system_prompt
+            print(f"Warning: Using fallback PydanticAgent. Install pydantic_ai for full functionality.")
+        
+        async def run(self, message):
+            """Run the agent with the provided message."""
+            try:
+                # Try to import a direct LLM client based on model_name prefix
+                if self.model_name.startswith("openai:"):
+                    # Try OpenAI
+                    import openai
+                    client = openai.OpenAI()
+                    response = client.chat.completions.create(
+                        model=self.model_name.split(":", 1)[1],
+                        messages=[
+                            {"role": "system", "content": self.system_prompt or "You are a helpful assistant."},
+                            {"role": "user", "content": message}
+                        ]
+                    )
+                    result_text = response.choices[0].message.content
+                elif self.model_name.startswith("anthropic:"):
+                    # Try Anthropic
+                    import anthropic
+                    client = anthropic.Anthropic()
+                    response = client.messages.create(
+                        model=self.model_name.split(":", 1)[1],
+                        system=self.system_prompt or "You are a helpful assistant.",
+                        messages=[{"role": "user", "content": message}]
+                    )
+                    result_text = response.content[0].text
+                else:
+                    # Fallback response
+                    result_text = f"I received your message: {message}. However, I'm running in fallback mode without LLM access."
+                
+                # Create the result object
+                result_data = {"message": result_text, "additional_info": {}}
+                
+                # Create a simple result class
+                class MinimalResult:
+                    def __init__(self, data):
+                        self.data = type('ResultData', (), data)
+                
+                return MinimalResult(result_data)
+            except Exception as e:
+                print(f"Error in fallback PydanticAgent: {str(e)}")
+                # Even more minimal fallback
+                result_data = {"message": f"I received your message, but encountered an error: {str(e)}", "additional_info": {"error": True}}
+                class MinimalResult:
+                    def __init__(self, data):
+                        self.data = type('ResultData', (), data)
+                return MinimalResult(result_data)
 
 
 class {{agent_class_name}}Input(AgentInput):
@@ -46,34 +153,45 @@ class {{agent_class_name}}PydanticResult(BaseModel):
 class Agent(BaseAgent):
     """{{agent_class_name}} agent implementation."""
     
+    # Use ConfigDict to set model config
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+    
     name: str = "{{agent_class_name}}"
     description: str = "A {{agent_name}} agent"
-    input_class = {{agent_class_name}}Input
-    output_class = {{agent_class_name}}Output
+    
+    # Properly annotate class variables
+    input_class: ClassVar[Type[AgentInput]] = {{agent_class_name}}Input
+    output_class: ClassVar[Type[AgentOutput]] = {{agent_class_name}}Output
     
     def __init__(self, **data):
         super().__init__(**data)
+            
         # Initialize Pydantic AI agent
-        self.pydantic_agent = PydanticAgent(
-            {% if llm_provider == "openai" %}
-            "openai:gpt-4o",  # Can be configured via environment variables
-            {% elif llm_provider == "anthropic" %}
-            "anthropic:claude-3-opus-20240229",  # Can be configured via environment variables
-            {% elif llm_provider == "daytona" %}
-            "daytona:openai/gpt-4o",  # Can be configured via environment variables
-            {% elif llm_provider == "huggingface" %}
-            "huggingface:mistralai/Mistral-7B-Instruct-v0.2",  # Can be configured via environment variables
-            {% elif llm_provider == "ollama" %}
-            "ollama:llama3",  # Can be configured via environment variables
-            {% else %}
-            "openai:gpt-4o",  # Can be configured via environment variables
-            {% endif %}
-            result_type={{agent_class_name}}PydanticResult,
-            system_prompt=(
-                "You are {{agent_class_name}}, an AI assistant designed to help with "
-                "{{agent_name}}. Be helpful, concise, and accurate in your responses."
+        try:
+            self.pydantic_agent = PydanticAgent(
+                {% if llm_provider == "openai" %}
+                "openai:gpt-4o",  # Can be configured via environment variables
+                {% elif llm_provider == "anthropic" %}
+                "anthropic:claude-3-opus-20240229",  # Can be configured via environment variables
+                {% elif llm_provider == "daytona" %}
+                "daytona:openai/gpt-4o",  # Can be configured via environment variables
+                {% elif llm_provider == "huggingface" %}
+                "huggingface:mistralai/Mistral-7B-Instruct-v0.2",  # Can be configured via environment variables
+                {% elif llm_provider == "ollama" %}
+                "ollama:llama3",  # Can be configured via environment variables
+                {% else %}
+                "openai:gpt-4o",  # Can be configured via environment variables
+                {% endif %}
+                result_type={{agent_class_name}}PydanticResult,
+                system_prompt=(
+                    "You are {{agent_class_name}}, an AI assistant designed to help with "
+                    "{{agent_name}}. Be helpful, concise, and accurate in your responses."
+                )
             )
-        )
+        except Exception as e:
+            print(f"Warning: Error initializing PydanticAgent: {str(e)}")
+            # Create a simple fallback agent that just echoes messages
+            self.pydantic_agent = PydanticAgent("fallback", result_type={{agent_class_name}}PydanticResult)
         
         {% if search_provider != "none" %}
         # Initialize search provider
@@ -263,8 +381,8 @@ class Agent(BaseAgent):
             {% if search_provider != "none" %}
             # Handle search if requested
             search_results = []
-            if "search_query" in input_data and input_data["search_query"]:
-                search_query = input_data["search_query"]
+            search_query = input_data.get("context", {}).get("search_query")
+            if search_query:
                 {% if logging_provider != "none" %}
                 self.log_event("search_request", query=search_query)
                 {% endif %}
@@ -275,8 +393,8 @@ class Agent(BaseAgent):
             {% if memory_provider != "none" %}
             # Handle memory retrieval if requested
             context = []
-            if input_data.get("retrieve_context", False):
-                context_query = input_data.get("context_query", input_data["message"])
+            if input_data.get("context", {}).get("retrieve_context", False):
+                context_query = input_data.get("context", {}).get("context_query", input_data["message"])
                 {% if logging_provider != "none" %}
                 self.log_event("memory_request", query=context_query)
                 {% endif %}
@@ -314,17 +432,25 @@ class Agent(BaseAgent):
             {% endif %}
             
             # Process with Pydantic AI
-            result = await self.pydantic_agent.run(enhanced_message)
+            try:
+                result = await self.pydantic_agent.run(enhanced_message)
+                response_message = result.data.message
+                additional_info = result.data.additional_info
+            except Exception as e:
+                print(f"Error in pydantic_agent.run: {str(e)}")
+                # Fallback response
+                response_message = f"I received your message: {input_data['message']}. However, I encountered an error while processing."
+                additional_info = {"error": str(e)}
             
             {% if logging_provider != "none" %}
             # Log the response
-            self.log_event("agent_response", response=result.data.message)
+            self.log_event("agent_response", response=response_message)
             {% endif %}
             
             # Return response with metadata
             response = {
-                "response": result.data.message,
-                "metadata": {**result.data.additional_info, **metadata}
+                "response": response_message,
+                "metadata": {**additional_info, **metadata}
             }
             
             {% if search_provider != "none" %}

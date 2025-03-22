@@ -4,13 +4,12 @@ import os
 import shutil
 import jinja2
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable, Union
 import json
 
 # Try to import Typer-related components for CLI prompts
 try:
     import typer
-    from typing import List
     HAS_TYPER = True
 except ImportError:
     HAS_TYPER = False
@@ -133,7 +132,7 @@ UTILITY_PACKAGES = {
 }
 
 
-def load_config():
+def load_config() -> Dict[str, Any]:
     """Load saved configuration defaults."""
     if CONFIG_FILE.exists():
         try:
@@ -144,15 +143,32 @@ def load_config():
     return {}
 
 
-def save_config(config):
-    """Save configuration defaults."""
+def save_config(config: Dict[str, Any]) -> None:
+    """
+    Save configuration defaults.
+    
+    Args:
+        config: Configuration to save
+    """
+    os.makedirs(os.path.dirname(CONFIG_FILE), exist_ok=True)
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=2)
 
 
-def prompt_choice(message, choices, default=None):
-    """Prompt for a choice from a list of options."""
+def prompt_choice(message: str, choices: List[str], default: Optional[str] = None) -> str:
+    """
+    Prompt for a choice from a list of options.
+    
+    Args:
+        message: Prompt message
+        choices: List of choices
+        default: Default choice
+        
+    Returns:
+        Selected choice
+    """
     if HAS_TYPER:
+        # Use typer for nicer prompts
         formatted_choices = "\n".join([f"{i+1}. {choice}" for i, choice in enumerate(choices)])
         choice_prompt = f"{message}\n{formatted_choices}\nChoose an option [1-{len(choices)}]"
         
@@ -170,6 +186,7 @@ def prompt_choice(message, choices, default=None):
             except ValueError:
                 typer.echo("Invalid input. Please enter a number.")
     else:
+        # Fallback to regular input
         print(message)
         for i, choice in enumerate(choices):
             print(f"{i+1}. {choice}")
@@ -189,8 +206,18 @@ def prompt_choice(message, choices, default=None):
                 print("Invalid input. Please enter a number.")
 
 
-def prompt_multiple_choice(message, choices, defaults=None):
-    """Prompt for multiple choices from a list of options."""
+def prompt_multiple_choice(message: str, choices: List[str], defaults: Optional[List[str]] = None) -> List[str]:
+    """
+    Prompt for multiple choices from a list of options.
+    
+    Args:
+        message: Prompt message
+        choices: List of choices
+        defaults: Default choices
+        
+    Returns:
+        List of selected choices
+    """
     if not HAS_TYPER:
         # Simple fallback for non-typer environments
         print(message)
@@ -222,7 +249,6 @@ def prompt_multiple_choice(message, choices, defaults=None):
                 print("Invalid input. Please enter comma-separated numbers.")
     else:
         # Use typer for multiple choice (checkboxes not directly supported)
-        # We'll use a comma-separated approach similar to the fallback
         choices_with_descriptions = [f"{i+1}. {choice}" for i, choice in enumerate(choices)]
         choices_display = "\n".join(choices_with_descriptions)
         
@@ -253,8 +279,18 @@ def prompt_multiple_choice(message, choices, defaults=None):
             except ValueError:
                 typer.echo("Invalid input. Please enter comma-separated numbers.")
 
-def prompt_yes_no(message, default=False):
-    """Prompt for a yes/no answer."""
+
+def prompt_yes_no(message: str, default: bool = False) -> bool:
+    """
+    Prompt for a yes/no answer.
+    
+    Args:
+        message: Prompt message
+        default: Default value
+        
+    Returns:
+        True for yes, False for no
+    """
     if HAS_TYPER:
         return typer.confirm(message, default=default)
     else:
@@ -265,8 +301,18 @@ def prompt_yes_no(message, default=False):
         return response.startswith('y')
 
 
-def prompt_text(message, default=None, validator=None):
-    """Prompt for text input with optional validation."""
+def prompt_text(message: str, default: Optional[str] = None, validator: Optional[Callable[[str], bool]] = None) -> str:
+    """
+    Prompt for text input with optional validation.
+    
+    Args:
+        message: Prompt message
+        default: Default value
+        validator: Validation function
+        
+    Returns:
+        User input
+    """
     if HAS_TYPER:
         while True:
             result = typer.prompt(message, default=default)
@@ -284,8 +330,16 @@ def prompt_text(message, default=None, validator=None):
             print("Invalid input. Please try again.")
 
 
-def get_agent_settings(name=None):
-    """Get agent settings from user input or defaults."""
+def get_agent_settings(name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Get agent settings from user input or defaults.
+    
+    Args:
+        name: Agent name (optional, will prompt if not provided)
+        
+    Returns:
+        Agent settings
+    """
     # Load saved defaults
     config = load_config()
     defaults = config.get('defaults', {})
@@ -297,11 +351,10 @@ def get_agent_settings(name=None):
     # Convert kebab-case to snake_case for the package name
     package_name = name.replace("-", "_")
     package_name = prompt_text("Enter package name (for Python imports)", default=package_name, 
-                              validator=lambda s: bool(s.strip()) and "_" not in s)
+                              validator=lambda s: bool(s.strip()) and s.isidentifier())
     
-    # Rest of the function remains the same...
     # Agent description
-    description = prompt_text("Enter agent description", default="An AI agent built with AgentScaffold")
+    description = prompt_text("Enter agent description", default=f"An AI agent for {name}")
     
     # LLM Provider
     llm_provider_choices = list(LLM_PROVIDERS.keys())
@@ -368,8 +421,26 @@ def get_agent_settings(name=None):
     return settings
 
 
-def generate_dependencies(llm_provider, search_provider, memory_provider, logging_provider, utilities):
-    """Generate list of dependencies based on selected providers."""
+def generate_dependencies(
+    llm_provider: str,
+    search_provider: str,
+    memory_provider: str,
+    logging_provider: str,
+    utilities: List[str]
+) -> List[str]:
+    """
+    Generate list of dependencies based on selected providers.
+    
+    Args:
+        llm_provider: LLM provider
+        search_provider: Search provider
+        memory_provider: Memory provider
+        logging_provider: Logging provider
+        utilities: List of utility packages
+        
+    Returns:
+        List of dependencies
+    """
     dependencies = [
         "pydantic>=2.0.0",
         "agentscaffold",
@@ -400,8 +471,24 @@ def generate_dependencies(llm_provider, search_provider, memory_provider, loggin
     return dependencies
 
 
-def generate_env_vars(llm_provider, search_provider, memory_provider, logging_provider):
-    """Generate environment variables based on selected providers."""
+def generate_env_vars(
+    llm_provider: str,
+    search_provider: str,
+    memory_provider: str,
+    logging_provider: str
+) -> List[str]:
+    """
+    Generate environment variables based on selected providers.
+    
+    Args:
+        llm_provider: LLM provider
+        search_provider: Search provider
+        memory_provider: Memory provider
+        logging_provider: Logging provider
+        
+    Returns:
+        List of environment variables
+    """
     env_vars = []
     
     # LLM provider environment variables
@@ -436,7 +523,6 @@ def create_new_agent(
     """
     Create a new agent with the specified name and template.
 
-
     Args:
         name: Name of the agent to create
         template: Template to use (default: basic)
@@ -455,50 +541,30 @@ def create_new_agent(
     agent_dir = os.path.join(output_dir, name)
     os.makedirs(agent_dir, exist_ok=True)
 
-
     # Create package directory
     package_dir = os.path.join(agent_dir, settings["package_name"])
     os.makedirs(package_dir, exist_ok=True)
 
     # Copy and render template files from the template directory
     template_dir = TEMPLATES_DIR / template
+    if not template_dir.exists():
+        raise ValueError(f"Template '{template}' not found in {TEMPLATES_DIR}")
 
     # Define template files to render
     template_files = [
         "README.md.jinja",
         "main.py.jinja",
         "requirements.in.jinja", 
-        "pyproject.toml.jinja"
+        "pyproject.toml.jinja",
+        ".env.example.jinja"  # New template file for .env.example
     ]
     
-    # Create .env.example content with the selected providers
-    env_example_content = """# Configure your API keys and other settings here
-# Uncomment and add your API keys
-
-"""
-    # Add environment variables for selected providers
-    for env_var in settings["env_vars"]:
-        env_example_content += f"# {env_var}\n"
-    
-    # Add Daytona environment variables
-    env_example_content += """
-# For Daytona remote execution (required for 'agentscaffold run')
-# DAYTONA_API_KEY=your-daytona-api-key 
-# DAYTONA_SERVER_URL=your-daytona-server-url
-# DAYTONA_TARGET=us
-"""
-
-    # Handle basic files first
+    # Try to render each template file
     for file_name in template_files:
         template_file_path = os.path.join(template_dir, file_name)
         if os.path.exists(template_file_path):
             _render_template_file(template_file_path, agent_dir, settings)
     
-    # Create .env.example file
-    env_example_path = os.path.join(agent_dir, '.env.example')
-    with open(env_example_path, 'w') as f:
-        f.write(env_example_content)
-
     # Handle package files
     pkg_template_dir = template_dir / "{{package_name}}"
     if pkg_template_dir.exists():
@@ -506,6 +572,29 @@ def create_new_agent(
             if file_name.endswith(".jinja"):
                 pkg_file_path = os.path.join(pkg_template_dir, file_name)
                 _render_template_file(pkg_file_path, package_dir, settings, is_package_file=True)
+
+    # Create .env.example file if the template doesn't exist
+    env_example_path = os.path.join(agent_dir, '.env.example')
+    if not os.path.exists(env_example_path):
+        # Create a default .env.example file
+        env_example_content = """# Environment variables for {{agent_name}}
+# Replace placeholder values with your actual credentials
+
+"""
+        # Add environment variables for selected providers
+        for env_var in settings["env_vars"]:
+            env_example_content += f"{env_var}\n"
+        
+        # Add Daytona environment variables
+        env_example_content += """
+# Daytona configuration (required for 'agentscaffold run')
+DAYTONA_API_KEY=your-daytona-api-key
+DAYTONA_SERVER_URL=your-daytona-server-url
+DAYTONA_TARGET=us
+"""
+        
+        with open(env_example_path, 'w') as f:
+            f.write(env_example_content)
 
     # Special handling for .env.example - make a copy as .env
     env_path = os.path.join(agent_dir, '.env')
@@ -518,10 +607,9 @@ def _render_template_file(
     output_dir: str,
     context: Dict[str, Any],
     is_package_file: bool = False,
-    ) -> None:
+) -> None:
     """
     Render a single template file and write it to the output directory.
-
 
     Args:
         template_path: Path to the template file
@@ -533,22 +621,21 @@ def _render_template_file(
     with open(template_path, 'r') as f:
         template_content = f.read()
 
-
     # Render the template
     env = jinja2.Environment()
     template = env.from_string(template_content)
     rendered_content = template.render(**context)
-
 
     # Determine the output file path
     file_name = os.path.basename(template_path)
     if file_name.endswith('.jinja'):
         file_name = file_name[:-6]  # Remove .jinja extension
 
-
     output_file_path = os.path.join(output_dir, file_name)
-
 
     # Write the rendered content to the output file
     with open(output_file_path, 'w') as f:
         f.write(rendered_content)
+        
+    if HAS_TYPER:
+        typer.echo(f"Created {output_file_path}")
