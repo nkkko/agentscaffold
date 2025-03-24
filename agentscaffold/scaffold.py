@@ -26,7 +26,7 @@ LLM_PROVIDERS = {
     "openai": {
         "env_vars": ["OPENAI_API_KEY"],
         "package": "openai>=1.0.0",
-        "description": "OpenAI API (GPT-4, etc.)"
+        "description": "OpenAI API (gpt-4o, etc.)"
     },
     "anthropic": {
         "env_vars": ["ANTHROPIC_API_KEY"],
@@ -362,6 +362,32 @@ def get_agent_settings(name: Optional[str] = None) -> Dict[str, Any]:
     llm_default = defaults.get('llm_provider', 'daytona')
     llm_provider = prompt_choice("Select LLM provider:", llm_provider_choices, default=llm_default)
     
+    # Prompt for API keys based on provider
+    api_keys = {}
+    
+    # If OpenAI is selected, prompt for API key
+    if llm_provider == "openai":
+        if HAS_TYPER:
+            openai_api_key = typer.prompt("Enter your OpenAI API key", hide_input=True)
+            typer.echo(f"OpenAI API key received (length: {len(openai_api_key)})")
+            api_keys["OPENAI_API_KEY"] = openai_api_key
+        else:
+            # Fallback to regular input if typer is not available
+            openai_api_key = input("Enter your OpenAI API key: ")
+            print(f"OpenAI API key received (length: {len(openai_api_key)})")
+            api_keys["OPENAI_API_KEY"] = openai_api_key
+    
+    # Similarly for Anthropic, if selected
+    if llm_provider == "anthropic":
+        if HAS_TYPER:
+            anthropic_api_key = typer.prompt("Enter your Anthropic API key", hide_input=True)
+            typer.echo(f"Anthropic API key received (length: {len(anthropic_api_key)})")
+            api_keys["ANTHROPIC_API_KEY"] = anthropic_api_key
+        else:
+            anthropic_api_key = input("Enter your Anthropic API key: ")
+            print(f"Anthropic API key received (length: {len(anthropic_api_key)})")
+            api_keys["ANTHROPIC_API_KEY"] = anthropic_api_key
+    
     # Search Provider
     search_provider_choices = list(SEARCH_PROVIDERS.keys())
     search_provider_display = [f"{k} - {v['description']}" for k, v in SEARCH_PROVIDERS.items()]
@@ -415,7 +441,8 @@ def get_agent_settings(name: Optional[str] = None) -> Dict[str, Any]:
         "logging_provider": logging_provider,
         "utilities": utilities,
         "dependencies": generate_dependencies(llm_provider, search_provider, memory_provider, logging_provider, utilities),
-        "env_vars": generate_env_vars(llm_provider, search_provider, memory_provider, logging_provider)
+        "env_vars": generate_env_vars(llm_provider, search_provider, memory_provider, logging_provider),
+        "api_keys": api_keys  # Add API keys to settings
     }
     
     return settings
@@ -476,7 +503,7 @@ def generate_env_vars(
     search_provider: str,
     memory_provider: str,
     logging_provider: str
-) -> List[str]:
+) -> Dict[str, str]:
     """
     Generate environment variables based on selected providers.
     
@@ -487,29 +514,29 @@ def generate_env_vars(
         logging_provider: Logging provider
         
     Returns:
-        List of environment variables
+        Dictionary of environment variables
     """
-    env_vars = []
+    env_vars = {}
     
     # LLM provider environment variables
     if llm_provider in LLM_PROVIDERS:
         for var in LLM_PROVIDERS[llm_provider]["env_vars"]:
-            env_vars.append(f"{var}=")
+            env_vars[var] = ""
     
     # Search provider environment variables
     if search_provider != "none" and search_provider in SEARCH_PROVIDERS:
         for var in SEARCH_PROVIDERS[search_provider]["env_vars"]:
-            env_vars.append(f"{var}=")
+            env_vars[var] = ""
     
     # Memory provider environment variables
     if memory_provider != "none" and memory_provider in MEMORY_PROVIDERS:
         for var in MEMORY_PROVIDERS[memory_provider]["env_vars"]:
-            env_vars.append(f"{var}=")
+            env_vars[var] = ""
     
     # Logging provider environment variables
     if logging_provider != "none" and logging_provider in LOGGING_PROVIDERS:
         for var in LOGGING_PROVIDERS[logging_provider]["env_vars"]:
-            env_vars.append(f"{var}=")
+            env_vars[var] = ""
     
     return env_vars
 
@@ -582,8 +609,8 @@ def create_new_agent(
 
 """
         # Add environment variables for selected providers
-        for env_var in settings["env_vars"]:
-            env_example_content += f"{env_var}\n"
+        for env_var, value in settings["env_vars"].items():
+            env_example_content += f"{env_var}={value}\n"
         
         # Add Daytona environment variables
         env_example_content += """
@@ -596,10 +623,47 @@ DAYTONA_TARGET=us
         with open(env_example_path, 'w') as f:
             f.write(env_example_content)
 
-    # Special handling for .env.example - make a copy as .env
+    # Create .env file with API keys if provided
     env_path = os.path.join(agent_dir, '.env')
-    if os.path.exists(env_example_path) and not os.path.exists(env_path):
-        shutil.copy(env_example_path, env_path)
+    if "api_keys" in settings and settings["api_keys"]:
+        # Create a .env file with the provided API keys
+        env_content = """# Environment variables for {{agent_name}}
+# Generated with actual API keys during setup
+
+"""
+        # Add API keys from settings
+        for key, value in settings["api_keys"].items():
+            if value:  # Only add if the value is not empty
+                env_content += f"{key}={value}\n"
+        
+        # Add other environment variables without values
+        for env_var, value in settings["env_vars"].items():
+            if env_var not in settings["api_keys"]:  # Skip if already added as an API key
+                env_content += f"{env_var}={value}\n"
+        
+        # Add Daytona configuration
+        env_content += """
+# Daytona configuration (required for 'agentscaffold run')
+DAYTONA_API_KEY=
+DAYTONA_SERVER_URL=
+DAYTONA_TARGET=us
+"""
+        
+        with open(env_path, 'w') as f:
+            f.write(env_content)
+        
+        if HAS_TYPER:
+            typer.echo(f"Created {env_path} with API keys")
+        else:
+            print(f"Created {env_path} with API keys")
+    else:
+        # No API keys provided, copy .env.example as .env
+        if os.path.exists(env_example_path) and not os.path.exists(env_path):
+            shutil.copy(env_example_path, env_path)
+            if HAS_TYPER:
+                typer.echo(f"Created {env_path} (copied from .env.example)")
+            else:
+                print(f"Created {env_path} (copied from .env.example)")
 
 
 def _render_template_file(

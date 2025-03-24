@@ -76,7 +76,7 @@ except ImportError:
                     import openai
                     client = openai.OpenAI()
                     # Use a default model name if needed
-                    model_name = "gpt-4"
+                    model_name = "gpt-4o"
                     if "/" in self.model_name:
                         model_name = self.model_name.split("/", 1)[1]
                     elif ":" in self.model_name:
@@ -184,17 +184,17 @@ class Agent(BaseAgent):
         try:
             self.pydantic_agent = PydanticAgent(
                 {% if llm_provider == "openai" %}
-                "gpt-4",  # Correct format for pydantic_ai
+                "gpt-4o",  # Correct format for pydantic_ai
                 {% elif llm_provider == "anthropic" %}
                 "anthropic/claude-3-opus-20240229",  # Correct format for pydantic_ai
                 {% elif llm_provider == "daytona" %}
-                "openai/gpt-4",  # Fallback to OpenAI
+                "gpt-4o",  # Fallback to OpenAI
                 {% elif llm_provider == "huggingface" %}
                 "huggingface/mistralai/Mistral-7B-Instruct-v0.2",  # Correct format for pydantic_ai
                 {% elif llm_provider == "ollama" %}
-                "openai/gpt-4",  # Fallback to OpenAI
+                "gpt-4o",  # Fallback to OpenAI
                 {% else %}
-                "openai/gpt-4",  # Fallback to OpenAI
+                "gpt-4o",  # Fallback to OpenAI
                 {% endif %}
                 result_type={{agent_class_name}}PydanticResult,
                 system_prompt=(
@@ -215,7 +215,7 @@ class Agent(BaseAgent):
                 print(f"Warning: Error initializing fallback PydanticAgent: {fallback_error}")
                 # Use our custom minimal implementation as last resort
                 self.pydantic_agent = PydanticAgent(
-                    "gpt-4",
+                    "gpt-4o",
                     result_type={{agent_class_name}}PydanticResult
                 )
         

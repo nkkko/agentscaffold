@@ -102,6 +102,7 @@ def new(
     logging_provider: Annotated[Optional[str], typer.Option(help="Logging provider (e.g., logfire, none)")] = "none",
     utilities: Annotated[Optional[List[str]], typer.Option(help="Utility packages to include, comma-separated")] = ["dotenv"],
     list_providers: Annotated[bool, typer.Option("--list-providers", "-l", help="List available providers and exit")] = False,
+    api_key: Annotated[Optional[str], typer.Option(help="API key for the selected LLM provider")] = None,
 ):
     """
     Create a new agent with the specified name and template.
@@ -163,6 +164,19 @@ def new(
             "logging_provider": logging_provider,
             "utilities": utilities or ["dotenv"],
         }
+        
+        # Add API key if provided
+        if api_key and llm_provider:
+            # Determine the environment variable name from the provider
+            if llm_provider == "openai":
+                settings["api_keys"] = {"OPENAI_API_KEY": api_key}
+                typer.echo(f"Using provided API key for {llm_provider} (length: {len(api_key)})")
+            elif llm_provider == "anthropic":
+                settings["api_keys"] = {"ANTHROPIC_API_KEY": api_key}
+                typer.echo(f"Using provided API key for {llm_provider} (length: {len(api_key)})")
+            elif llm_provider == "huggingface":
+                settings["api_keys"] = {"HUGGINGFACE_API_KEY": api_key}
+                typer.echo(f"Using provided API key for {llm_provider} (length: {len(api_key)})")
         
         # Add dependencies and env_vars
         settings["dependencies"] = generate_dependencies(

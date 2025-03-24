@@ -126,13 +126,38 @@ class DaytonaRuntime:
         """
         # Predefined simple Daytona-compatible agent implementation
         daytona_agent_code = """# Daytona-compatible agent implementation
-# Contains no ClassVar annotations which are incompatible with standard Pydantic in remote environment
+    # Contains no ClassVar annotations which are incompatible with standard Pydantic in remote environment
 
 import json
 import os
 
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, Any, Optional, List, Union
+
+# Try to load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("Warning: python-dotenv not installed")
+
+# Debug environment variables
+print("==== ENVIRONMENT VARIABLES ====")
+for key, value in os.environ.items():
+    if "KEY" in key or "TOKEN" in key or "SECRET" in key:
+        masked_value = "********" + value[-4:] if len(value) > 4 else "****"
+        print(f"  {key}: {masked_value}")
+    else:
+        print(f"  {key}: {value}")
+print("==============================")
+
+
+# Verify OpenAI API key
+openai_api_key = os.environ.get("OPENAI_API_KEY")
+if openai_api_key:
+    print(f"Found OpenAI API key (length: {len(openai_api_key)})")
+else:
+    print("Warning: OPENAI_API_KEY not found in environment variables")
 
 # Basic agent classes that don't rely on external imports
 class AgentInput(BaseModel):
@@ -186,20 +211,29 @@ class PydanticAgent:
     async def run(self, message):
         \"\"\"Run the agent with the message.\"\"\"
         try:
-            if self.model_name.startswith("openai:"):
-                import openai
-                client = openai.OpenAI()
-                response = client.chat.completions.create(
-                    model=self.model_name.split(":", 1)[1],
-                    messages=[
-                        {"role": "system", "content": self.system_prompt or "You are a helpful assistant."},
-                        {"role": "user", "content": message}
-                    ]
-                )
-                result_text = response.choices[0].message.content
-            else:
-                # Fallback response
-                result_text = f"I received your message: {message}."
+            # Handle different model name formats
+            model_name = self.model_name
+            if ":" in model_name:
+                model_name = model_name.split(":", 1)[1]
+            elif "/" in model_name:
+                model_name = model_name.split("/", 1)[1]
+                
+            # Initialize OpenAI client with explicit API key
+            import openai
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                print("No OpenAI API key found in environment")
+                raise ValueError("Missing OpenAI API key")
+                
+            client = openai.OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": self.system_prompt or "You are a helpful assistant."},
+                    {"role": "user", "content": message}
+                ]
+            )
+            result_text = response.choices[0].message.content
             
             # Create a simple result object
             result_data = {"message": result_text, "additional_info": {}}
@@ -210,9 +244,19 @@ class PydanticAgent:
             
             return MinimalResult(result_data)
         except Exception as e:
-            # Fallback for errors
-            print(f"Error processing message: {e}")
-            result_data = {"message": f"I received your message, but encountered an error.", "additional_info": {"error": str(e)}}
+            # Enhanced error handling with more useful debug info
+            print(f"Error processing message with LLM: {e}")
+            print(f"Model name attempted: {self.model_name}")
+            
+            # More informative fallback response
+            result_text = (
+                f"Hello! I received your message about '{message[:30]}...'. "
+                f"I'm an agent running on Daytona, but I couldn't access the LLM due to missing credentials. "
+                f"To enable full functionality, please set your OPENAI_API_KEY in the .env file. "
+                f"In the meantime, I'll try to help with basic functionality."
+            )
+            
+            result_data = {"message": result_text, "additional_info": {"error": str(e)}}
             
             class MinimalResult:
                 def __init__(self, data):
@@ -225,18 +269,16 @@ class Agent(BaseAgent):
     
     # Use ConfigDict to set model config
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    pydantic_agent: Optional[Any] = None  # Add this line
-
-
     
     name: str = "DaytonaTestAgent"
     description: str = "A daytona-test-agent agent"
+    pydantic_agent: Optional[Any] = None  # Added the field definition
     
     def __init__(self, **data):
         super().__init__(**data)
         try:
             self.pydantic_agent = PydanticAgent(
-                "gpt-4",
+                "gpt-4",  # Without the "openai:" prefix
                 result_type=DaytonaTestAgentPydanticResult,
                 system_prompt=(
                     "You are DaytonaTestAgent, an AI assistant designed to help with "
@@ -245,7 +287,7 @@ class Agent(BaseAgent):
             )
         except Exception as e:
             print(f"Warning: Error initializing PydanticAgent: {e}")
-            self.pydantic_agent = PydanticAgent("fallback", result_type=DaytonaTestAgentPydanticResult)
+            self.pydantic_agent = PydanticAgent("gpt-3.5-turbo", result_type=DaytonaTestAgentPydanticResult)
     
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         \"\"\"
@@ -260,17 +302,31 @@ class Agent(BaseAgent):
         try:
             metadata = {}
             
-            # Process with Pydantic AI
+            # Try to use PydanticAgent first
             try:
                 result = await self.pydantic_agent.run(input_data["message"])
                 response_message = result.data.message
                 additional_info = result.data.additional_info
             except Exception as e:
                 print(f"Error in pydantic_agent.run: {e}")
-                # Fallback response
-                response_message = f"I received your message: {input_data['message']}. Running on Daytona!"
-                additional_info = {"error": str(e)}
+                # More helpful fallback response
+                response_message = (
+                    f"Hello! I received your message: '{input_data['message']}'. "
+                    f"I'm currently running in fallback mode on Daytona. "
+                    f"I can provide basic assistance, but my AI capabilities are limited right now. "
+                    f"How can I help you today?"
+                )
+                additional_info = {"fallback_mode": True, "error": str(e)}
             
+            # Add some basic processing for common intents
+            message = input_data["message"].lower()
+            if "hello" in message or "hi" in message:
+                metadata["detected_intent"] = "greeting"
+            elif "help" in message:
+                metadata["detected_intent"] = "help_request"
+            elif "thank" in message:
+                metadata["detected_intent"] = "gratitude"
+                
             # Return response with metadata
             return {
                 "response": response_message,
@@ -307,7 +363,7 @@ class Agent(BaseAgent):
             print(f"Error extracting information from original agent: {e}")
         
         return daytona_agent_code
-    
+
     def _ensure_dependency(self, package: str, workspace) -> None:
         """Ensure that a dependency exists in the Daytona workspace."""
         try:
@@ -343,7 +399,7 @@ class Agent(BaseAgent):
         from pathlib import Path
         import sys
         import os
-        
+              
         # Create the workspace directory structure in the home directory
         remote_dir = "/home/daytona/agent"
         try:
@@ -355,6 +411,55 @@ class Agent(BaseAgent):
             
             # List of files uploaded successfully for debugging
             uploaded_files = []
+            
+            #Upload .env file first
+            env_path = Path(agent_dir) / ".env"
+            if env_path.exists():
+                try:
+                    print("Uploading .env file...")
+                    with open(env_path, "rb") as f:
+                        content = f.read()
+
+                    # Check if OPENAI_API_KEY is present
+                    env_content = content.decode('utf-8', errors='replace')  # Define env_content first
+                    if "OPENAI_API_KEY=" in env_content:
+                        key_line = [line for line in env_content.split("\n") if "OPENAI_API_KEY=" in line][0]
+                        key_value = key_line.split("=", 1)[1].strip()
+                        print(f"Found OPENAI_API_KEY in .env file (length: {len(key_value)})")
+                    else:
+                        print("WARNING: OPENAI_API_KEY not found in .env file!")
+                    remote_env_path = f"{remote_dir}/.env"
+                    workspace.fs.upload_file(remote_env_path, content)                            
+                    print("Successfully uploaded .env file")
+
+                
+                    # Log the first few characters (hide most of the key)
+                    content_str = content.decode('utf-8', errors='replace')
+                    safe_content = '\n'.join([
+                        line if not line.startswith("OPENAI_API_KEY=") else 
+                        f"OPENAI_API_KEY=***{line.split('=')[1][-4:] if '=' in line else ''}" 
+                        for line in content_str.split('\n')
+                    ])
+                    print(f".env file preview: {safe_content[:200]}...")
+                    print("Successfully uploaded .env file")
+                    uploaded_files.append(".env")
+
+
+                    # Create environment variables in Daytona workspace directly
+                    print("Setting up environment variables directly in workspace...")
+                    for line in env_content.split('\n'):
+                        if '=' in line and not line.strip().startswith('#'):
+                            key, value = line.split('=', 1)
+                            key = key.strip()
+                            value = value.strip()
+                            if key and value:
+                                # Export environment variable in the workspace session
+                                masked_value = f"***{value[-4:]}" if len(value) > 4 and "KEY" in key else value
+                                print(f"Exporting {key}={masked_value}")
+                                workspace.process.exec(f"export {key}={value}")
+                                
+                except Exception as env_error:
+                    print(f"Error uploading .env file: {env_error}")
             
             # Upload essential files only (skip .venv and other large directories)
             essential_patterns = [
@@ -438,6 +543,14 @@ import traceback
 
 # Add current directory to path to help with imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# Try to load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+    print("Loaded environment variables from .env file in main.py")
+except ImportError:
+    print("Warning: python-dotenv not installed in main.py")
 
 # Try to import the agent from the package
 try:
