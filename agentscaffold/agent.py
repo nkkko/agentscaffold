@@ -222,8 +222,28 @@ class PydanticAgent:
             import openai
             api_key = os.environ.get("OPENAI_API_KEY")
             if not api_key:
-                print("No OpenAI API key found in environment")
+                try:
+                    from dotenv import load_dotenv
+                    load_dotenv()
+                    api_key = os.environ.get("OPENAI_API_KEY")
+                except ImportError:
+                    pass
+                # Try direct file read as last resort
+                if not api_key and os.path.exists(".env"):
+                    try:
+                        with open(".env", "r") as f:
+                            for line in f:
+                                if "OPENAI_API_KEY=" in line:
+                                    api_key = line.split("=", 1)[1].strip()
+                                    break
+                    except Exception as e:
+                        print(f"Error reading .env file: {e}")
+        
+            if not api_key:
+                print("No OpenAI API key found in environment or .env file")
                 raise ValueError("Missing OpenAI API key")
+            
+            print(f"Using OpenAI API key (length: {len(api_key)})")
                 
             client = openai.OpenAI(api_key=api_key)
             response = client.chat.completions.create(
@@ -414,16 +434,32 @@ class Agent(BaseAgent):
             
             #Upload .env file first
             env_path = Path(agent_dir) / ".env"
+            parent_dir = Path(agent_dir).parent
+            parent_env_path = parent_dir / ".env"
+
+            print(f"Looking for .env file in {env_path}")
+            print(f"Looking for .env file in parent directory: {parent_env_path}")
+
             if env_path.exists():
+                print(f"Found .env file in agent directory: {env_path}")
+                env_file_path = env_path
+            elif parent_env_path.exists():
+                print(f"Found .env file in parent directory: {parent_env_path}")
+                env_file_path = parent_env_path
+            else:
+                print("WARNING: No .env file found in either directory!")
+                env_file_path = None
+            
+            if env_file_path:
                 try:
-                    print("Uploading .env file...")
-                    with open(env_path, "rb") as f:
+                    print("Uploading .env file from {env_file_path}...")
+                    with open(env_file_path, "rb") as f:
                         content = f.read()
 
                     # Check if OPENAI_API_KEY is present
                     env_content = content.decode('utf-8', errors='replace')  # Define env_content first
                     if "OPENAI_API_KEY=" in env_content:
-                        key_line = [line for line in env_content.split("\n") if "OPENAI_API_KEY=" in line][0]
+                        key_line = [line for line in env_content.split("\n") if "OPENAI_API_KEY=" in line]
                         key_value = key_line.split("=", 1)[1].strip()
                         print(f"Found OPENAI_API_KEY in .env file (length: {len(key_value)})")
                     else:
@@ -775,11 +811,52 @@ import os
 import base64
 os.chdir('/home/daytona/agent')
 
+# Make sure environment variables are set before importing any modules
+print("Setting up environment variables...")
+
 try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+    # First try python-dotenv
+    try:
+        from dotenv import load_dotenv
+        print("Loading .env file with python-dotenv...")
+        if load_dotenv('/home/daytona/agent/.env'):
+            print("Successfully loaded .env file with python-dotenv")
+        else:
+            print("No .env file found or failed to load with python-dotenv")
+    except ImportError:
+        print("python-dotenv not available, falling back to manual loading")
+    
+    # Manual backup approach to load .env
+    env_path = '/home/daytona/agent/.env'
+    if os.path.exists(env_path):
+        print(f"Found .env file at {{env_path}}, loading manually...")
+        with open(env_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if value:
+                        os.environ[key] = value
+                        if 'KEY' in key or 'TOKEN' in key or 'SECRET' in key:
+                            print(f"Set {{key}} environment variable (length: {{len(value)}})")
+                        else:
+                            print(f"Set {{key}} environment variable: {{value}}")
+
+    # Verify OpenAI API key is set
+    openai_key = os.environ.get('OPENAI_API_KEY')
+    if openai_key:
+        print(f"✅ OPENAI_API_KEY is set (length: {{len(openai_key)}})")
+    else:
+        print("❌ WARNING: OPENAI_API_KEY is not set in environment variables!")
+
+except Exception as env_error:
+    print(f"Error setting up environment variables: {{env_error}}")
+    traceback.print_exc()
+
+os.chdir('/home/daytona/agent')
+        
 
 print("Debug: Current directory:", os.getcwd())
 print("Debug: Directory contents:", os.listdir('.'))

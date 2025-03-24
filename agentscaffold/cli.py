@@ -65,7 +65,7 @@ def run_command_with_spinner(command, cwd, start_message, success_message, error
         spinner.fail(f"Error: Command not found: {command[0]}")
         raise typer.Exit(1)
 
-def show_provider_options(ctx: typer.Context):
+def show_provider_options(ctx=None):
     """Show available provider options."""
     typer.echo("\nAvailable LLM providers:")
     for key, details in LLM_PROVIDERS.items():
@@ -108,7 +108,7 @@ def new(
     Create a new agent with the specified name and template.
     """
     if list_providers:
-        show_provider_options(typer.Context(new))
+        show_provider_options()
     
     if output_dir is None:
         output_dir = os.getcwd()
@@ -378,7 +378,7 @@ def templates():
 @app.command()
 def providers():
     """List available providers for LLM, search, memory and logging."""
-    show_provider_options(typer.Context(providers))
+    show_provider_options()
 
 
 if __name__ == "__main__":
