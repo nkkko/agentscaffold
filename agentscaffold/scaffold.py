@@ -32,21 +32,6 @@ LLM_PROVIDERS = {
         "env_vars": ["ANTHROPIC_API_KEY"],
         "package": "anthropic>=0.5.0",
         "description": "Anthropic API (Claude)"
-    },
-    "huggingface": {
-        "env_vars": ["HUGGINGFACE_API_KEY"],
-        "package": "huggingface_hub>=0.16.0",
-        "description": "HuggingFace Inference API"
-    },
-    "ollama": {
-        "env_vars": ["OLLAMA_HOST"],
-        "package": "ollama>=0.1.0",
-        "description": "Local LLMs with Ollama"
-    },
-    "daytona": {
-        "env_vars": ["DAYTONA_API_KEY", "DAYTONA_SERVER_URL", "DAYTONA_TARGET"],
-        "package": "daytona-sdk>=0.1.0",
-        "description": "Daytona Managed LLM API"
     }
 }
 
@@ -55,11 +40,6 @@ SEARCH_PROVIDERS = {
         "env_vars": ["BRAVE_API_KEY"],
         "package": "brave-search>=0.1.0",
         "description": "Brave Search API"
-    },
-    "browserbase": {
-        "env_vars": ["BROWSERBASE_API_KEY"],
-        "package": "browserbase>=0.1.0",
-        "description": "BrowserBase API"
     },
     "none": {
         "env_vars": [],
@@ -73,16 +53,6 @@ MEMORY_PROVIDERS = {
         "env_vars": ["SUPABASE_URL", "SUPABASE_KEY"],
         "package": "supabase>=0.7.0",
         "description": "Supabase vector database"
-    },
-    "milvus": {
-        "env_vars": ["MILVUS_URI"],
-        "package": "pymilvus>=2.2.0",
-        "description": "Milvus vector database"
-    },
-    "chromadb": {
-        "env_vars": ["CHROMA_DB_PATH"],
-        "package": "chromadb>=0.4.0",
-        "description": "ChromaDB local vector database"
     },
     "none": {
         "env_vars": [],
@@ -105,10 +75,6 @@ LOGGING_PROVIDERS = {
 }
 
 UTILITY_PACKAGES = {
-    "pypdf": {
-        "package": "pypdf>=3.0.0",
-        "description": "PDF parsing utility"
-    },
     "puppeteer": {
         "package": "pyppeteer>=1.0.0",
         "description": "Headless Chrome/Chromium automation"
@@ -117,17 +83,9 @@ UTILITY_PACKAGES = {
         "package": "python-dotenv>=1.0.0",
         "description": "Environment variable management"
     },
-    "requests": {
-        "package": "requests>=2.0.0",
-        "description": "HTTP requests library"
-    },
-    "beautifulsoup": {
-        "package": "beautifulsoup4>=4.0.0",
-        "description": "HTML parsing library"
-    },
-    "playwright": {
-        "package": "playwright>=1.0.0",
-        "description": "Browser automation library"
+    "none": {
+        "package": None,
+        "description": "No utility package"
     }
 }
 

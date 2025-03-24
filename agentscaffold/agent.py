@@ -459,9 +459,12 @@ class Agent(BaseAgent):
                     # Check if OPENAI_API_KEY is present
                     env_content = content.decode('utf-8', errors='replace')  # Define env_content first
                     if "OPENAI_API_KEY=" in env_content:
-                        key_line = [line for line in env_content.split("\n") if "OPENAI_API_KEY=" in line]
-                        key_value = key_line.split("=", 1)[1].strip()
-                        print(f"Found OPENAI_API_KEY in .env file (length: {len(key_value)})")
+                        key_lines = [line for line in env_content.split("\n") if "OPENAI_API_KEY=" in line]
+                        if key_lines:
+                            key_value = key_lines[0].split("=", 1)[1].strip()
+                            print(f"Found OPENAI_API_KEY in .env file (length: {len(key_value)})")
+                        else:
+                            print("WARNING: OPENAI_API_KEY not found in .env file!")
                     else:
                         print("WARNING: OPENAI_API_KEY not found in .env file!")
                     remote_env_path = f"{remote_dir}/.env"
@@ -1000,6 +1003,8 @@ class Agent(BaseModel):
     """Base agent class for AgentScaffold."""
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+    pydantic_agent: Optional[Any] = None
+
     
     name: str = "BaseAgent"  # Provide a default value for name
     description: str = ""
