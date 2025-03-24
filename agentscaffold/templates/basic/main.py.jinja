@@ -1,200 +1,280 @@
-"""Main entry point for {{agent_name}} agent."""
+#!/usr/bin/env python
+"""Main entry point for {{ agent_name }} agent."""
 
-import asyncio
-import json
 import os
 import sys
-from typing import Dict, Any, Optional
+import asyncio
 import argparse
+from typing import Dict, Any, Optional
 
-# Add the current directory to the path to help with imports
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+{% if "dotenv" in utilities %}
+# Load environment variables early
+from dotenv import load_dotenv
+load_dotenv()
+print("Loaded environment variables from .env file")
+{% endif %}
 
-# Try to load environment variables
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-    print("Loaded environment variables from .env file")
-except ImportError:
-    print("Warning: python-dotenv not installed, using environment variables directly")
-
-# Import the agent with error handling
-try:
-    print(f"Importing agent from {{package_name}}.agent")
-    from {{package_name}}.agent import Agent
-    print(f"Successfully imported Agent from {{package_name}}.agent")
-except ImportError as e:
-    print(f"Error importing Agent from {{package_name}}.agent: {e}")
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="{{ description }}")
     
-    # Try alternative import
-    try:
-        print("Trying to import Agent from agent.py directly")
-        from agent import Agent
-        print("Successfully imported Agent from agent.py")
-    except ImportError as e2:
-        print(f"Could not import Agent from agent.py either: {e2}")
-        sys.exit(1)
-
-async def process_message(agent: Agent, message: str, search_query: Optional[str] = None, 
-                        context: bool = False, context_query: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Process a message with the agent.
+    # Basic arguments
+    parser.add_argument("--message", "-m", help="Message to process")
+    parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
     
-    Args:
-        agent: Agent instance
-        message: Message to process
-        search_query: Optional search query to include with the message
-        context: Whether to retrieve context from memory
-        context_query: Optional query for context retrieval
-        
-    Returns:
-        Agent response
-    """
-    # Create input data
+    # Search arguments
+    parser.add_argument("--search", "-s", help="Search query")
+    
+    # Memory arguments
+    parser.add_argument("--context", "-c", action="store_true", help="Retrieve context from memory")
+    parser.add_argument("--context-query", help="Query for context retrieval")
+    parser.add_argument("--store", action="store_true", help="Store conversation in memory")
+    
+    # Logging arguments
+    parser.add_argument("--user-id", help="User ID for logging")
+    parser.add_argument("--session-id", help="Session ID for logging")
+    
+    # Daytona arguments
+    parser.add_argument("--daytona", "-d", action="store_true", help="Force execution in Daytona")
+    
+    return parser.parse_args()
+
+async def process_message(agent, message, args=None):
+    """Process a message with the agent."""
+    # Prepare input data
     input_data = {
         "message": message,
         "context": {}
     }
     
     # Add search query if provided
-    if search_query:
-        input_data["context"]["search_query"] = search_query
+    if args and args.search:
+        input_data["search_query"] = args.search
     
-    # Add context retrieval if requested
-    if context:
-        input_data["context"]["retrieve_context"] = True
-        if context_query:
-            input_data["context"]["context_query"] = context_query
+    # Add memory retrieval if requested
+    if args and args.context:
+        input_data["retrieve_context"] = True
+        if args.context_query:
+            input_data["context_query"] = args.context_query
     
-    # Process message
-    print(f"Processing message: {message[:50]}...")
-    print(f"Processing with {agent.name} agent...")
+    # Add memory storage if requested
+    if args and args.store:
+        input_data["store_in_memory"] = True
     
-    # Run the agent
-    try:
-        result = await agent.run(input_data)
-        return result
-    except Exception as e:
-        print(f"Error running agent: {e}")
-        import traceback
-        traceback.print_exc()
+    # Add user and session IDs for logging
+    if args and args.user_id:
+        input_data["context"]["user_id"] = args.user_id
+    if args and args.session_id:
+        input_data["context"]["session_id"] = args.session_id
+    
+    # Add Daytona flag if set
+    if args and args.daytona:
+        input_data["context"]["force_daytona"] = True
+    
+    # Process the message - using await with run method
+    result = await agent.run(input_data)
+    
+    # Print formatted output - handle the result safely
+    if isinstance(result, dict):
+        if result.get("search_results"):
+            print("\n--- Search Results ---")
+            for i, result_item in enumerate(result["search_results"], 1):
+                print(f"{i}. {result_item.get('title', 'No title')} - {result_item.get('url', 'No URL')}")
+            print("---------------------\n")
         
-        # Fallback response
-        return {
-            "response": f"I encountered an error processing your request: {str(e)}",
-            "metadata": {"error": True}
-        }
+        if result.get("memory_context"):
+            print("\n--- Memory Context ---")
+            print(result["memory_context"])
+            print("----------------------\n")
+        
+        print(f"\nAgent: {result.get('response', 'No response')}")
+    else:
+        print(f"\nAgent: {result}")
+    
+    return result
 
-async def interactive_mode(agent: Agent):
+async def run_interactive(agent):
     """Run the agent in interactive mode."""
-    print(f"Starting interactive session with {agent.name}...")
-    print(f"Type 'exit' or 'quit' to end the session")
-    print(f"Type 'search: <query>' to include a search query")
-    print(f"Type 'context: <query>' to retrieve context")
-    print()
+    print(f"Welcome to {agent.name} - {agent.description}")
+    print("Type 'quit', 'exit', or press Ctrl+C to exit.")
+    print("Commands:")
+    print("  /search <query> - Search the web")
+    print("  /context - Retrieve context from memory")
+    print("  /context <query> - Retrieve context for a specific query")
+    print("  /store on - Store conversations in memory")
+    print("  /store off - Don't store conversations in memory")
+    print("  /daytona on - Force execution in Daytona")
+    print("  /daytona off - Use local execution")
+    print("  /help - Show this help message")
     
-    while True:
-        # Get input from the user
-        user_input = input("> ")
-        
-        # Check for exit command
-        if user_input.lower() in ["exit", "quit"]:
-            print("Exiting interactive session")
-            break
-        
-        # Check for search command
-        search_query = None
-        if user_input.lower().startswith("search: "):
-            search_query = user_input[8:].strip()
-            user_input = input("Message: ")
-        
-        # Check for context command
-        context = False
-        context_query = None
-        if user_input.lower().startswith("context: "):
-            context = True
-            context_query = user_input[9:].strip()
-            user_input = input("Message: ")
-        
-        # Process the message
-        result = await process_message(agent, user_input, search_query, context, context_query)
-        
-        # Print the response
-        print(f"\n{result['response']}\n")
+    store_in_memory = False
+    retrieve_context = False
+    force_daytona = False
+    context_query = None
+    search_query = None
+    
+    try:
+        while True:
+            # Get user input
+            message = input("\nYou: ")
+            
+            # Check for exit command
+            if message.lower() in ["quit", "exit", "q"]:
+                break
+            
+            # Check for commands
+            if message.startswith("/"):
+                parts = message.split(maxsplit=1)
+                command = parts[0].lower()
+                
+                if command == "/help":
+                    print("Commands:")
+                    print("  /search <query> - Search the web")
+                    print("  /context - Retrieve context from memory")
+                    print("  /context <query> - Retrieve context for a specific query")
+                    print("  /store on - Store conversations in memory")
+                    print("  /store off - Don't store conversations in memory")
+                    print("  /daytona on - Force execution in Daytona")
+                    print("  /daytona off - Use local execution")
+                    print("  /help - Show this help message")
+                    continue
+                
+                if command == "/search":
+                    if len(parts) > 1:
+                        search_query = parts[1]
+                        print(f"Search query set to: {search_query}")
+                    else:
+                        search_query = None
+                        print("Search query cleared")
+                    continue
+                
+                if command == "/context":
+                    retrieve_context = True
+                    if len(parts) > 1:
+                        context_query = parts[1]
+                        print(f"Will retrieve context for: {context_query}")
+                    else:
+                        context_query = None
+                        print("Will retrieve context for user messages")
+                    continue
+                
+                if command == "/store":
+                    if len(parts) > 1 and parts[1].lower() in ["on", "true", "yes"]:
+                        store_in_memory = True
+                        print("Memory storage turned ON")
+                    else:
+                        store_in_memory = False
+                        print("Memory storage turned OFF")
+                    continue
+                    
+                if command == "/daytona":
+                    if len(parts) > 1 and parts[1].lower() in ["on", "true", "yes"]:
+                        force_daytona = True
+                        print("Daytona execution turned ON")
+                    else:
+                        force_daytona = False
+                        print("Daytona execution turned OFF")
+                    continue
+            
+            # Process regular message
+            input_data = {
+                "message": message,
+                "context": {
+                    "force_daytona": force_daytona
+                },
+                "store_in_memory": store_in_memory,
+                "retrieve_context": retrieve_context
+            }
+            
+            if context_query:
+                input_data["context_query"] = context_query
+            
+            if search_query:
+                input_data["search_query"] = search_query
+                # Reset search query after using it once
+                print(f"Searching for: {search_query}")
+                search_query = None
+            
+            # Process the message - using await with run method
+            result = await agent.run(input_data)
+            
+            # Handle the result properly, checking if it's a dict
+            if isinstance(result, dict):
+                # Print formatted output
+                if "search_results" in result:
+                    print("\n--- Search Results ---")
+                    for i, res in enumerate(result["search_results"], 1):
+                        print(f"{i}. {res.get('title', 'No title')}")
+                        print(f"   {res.get('url', 'No URL')}")
+                    print("---------------------\n")
+                
+                if "memory_context" in result:
+                    print("\n--- Memory Context ---")
+                    print(result["memory_context"])
+                    print("----------------------\n")
+                
+                print(f"\nAgent: {result.get('response', 'No response')}")
+            else:
+                print(f"\nAgent: {result}")
+    
+    except KeyboardInterrupt:
+        print("\nExiting interactive mode.")
+    
+    # Close the conversation if logging is enabled
+    if hasattr(agent, 'logging_provider') and agent.logging_provider:
+        agent.logging_provider.end_conversation({"exit_type": "user_initiated"})
 
 async def main():
     """Main entry point."""
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="{{description}}")
-    parser.add_argument("--message", "-m", help="Message to process")
-    parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
-    parser.add_argument("--search", "-s", help="Search query")
-    parser.add_argument("--context", "-c", action="store_true", help="Retrieve context from memory")
-    parser.add_argument("--context-query", help="Query for context retrieval")
+    args = parse_args()
     
-    args = parser.parse_args()
+    print("Importing agent from {{ package_name }}.agent")
+    try:
+        from {{ package_name }}.agent import Agent
+        print("Successfully imported Agent from {{ package_name }}.agent")
+    except ImportError as e:
+        print(f"Error importing Agent from {{ package_name }}.agent: {e}")
+        try:
+            # Try to import directly from agent.py in root directory as fallback
+            from agent import Agent
+            print("Successfully imported Agent from agent.py")
+        except ImportError:
+            print("Error: Could not import Agent. Make sure the package is installed correctly.")
+            sys.exit(1)
     
     # Initialize the agent
+    print("Initializing agent...")
     try:
-        print("Initializing agent...")
         agent = Agent()
-        print(f"Agent initialized: {agent.name}")
-        
-        # Set your Daytona environment variables in .env file
-        # Alternatively, you can set them here:
-        # os.environ["DAYTONA_API_KEY"] = "your-api-key"
-        # os.environ["DAYTONA_SERVER_URL"] = "your-server-url"
-        # os.environ["DAYTONA_TARGET"] = "us"
+    
     except Exception as e:
         print(f"Error initializing agent: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
     
-    # Run in interactive mode if requested
-    if args.interactive:
-        await interactive_mode(agent)
-        return
-    
-    # Process a single message if provided
-    if args.message:
-        try:
-            result = await process_message(agent, args.message, args.search, args.context, args.context_query)
-            print("Response:")
-            print(result["response"])
+    try:
+        if args.interactive:
+            await run_interactive(agent)
+        elif args.message:
+            await process_message(agent, args.message, args)
+        else:
+            print("No message provided. Run with --interactive or --message.")
+            print("See --help for more options.")
             
-            # Print additional information if available
-            if "metadata" in result and result["metadata"]:
-                print("\nAdditional Information:")
-                for key, value in result["metadata"].items():
-                    if key != "error":  # Skip error key as it's usually not meaningful to show
-                        print(f"  {key}: {value}")
-        except Exception as e:
-            print(f"Error processing message: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        # If no message or interactive mode, use a demo message
-        demo_message = "Hello, I'd like to know more about {{agent_name}}."
-        print(f"No message provided. Using demo message: {demo_message}")
-        
-        try:
-            result = await process_message(agent, demo_message)
-            print("\nResponse:")
-            print(f"  {result['response']}")
+            # Default to interactive mode if no arguments provided
+            await run_interactive(agent)
             
-            if result.get('metadata'):
-                print("\nMetadata:")
-                for key, value in result['metadata'].items():
-                    if key != "error":
-                        print(f"  {key}: {value}")
-        except Exception as e:
-            print(f"Error processing demo message: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    # Return the result for Daytona runtime
-    return result
+    except KeyboardInterrupt:
+        print("\nOperation cancelled by user.")
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # Clean up resources if needed
+        if hasattr(agent, 'logging_provider') and agent.logging_provider:
+            agent.logging_provider.end_conversation()
 
 if __name__ == "__main__":
     asyncio.run(main())

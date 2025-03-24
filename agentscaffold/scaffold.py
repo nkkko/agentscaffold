@@ -32,14 +32,34 @@ LLM_PROVIDERS = {
         "env_vars": ["ANTHROPIC_API_KEY"],
         "package": "anthropic>=0.5.0",
         "description": "Anthropic API (Claude)"
+    }, 
+    "daytona": {
+        "env_vars": ["DAYTONA_API_KEY", "DAYTONA_SERVER_URL", "DAYTONA_TARGET"],
+        "package": "daytona-sdk>=0.1.0",
+        "description": "Daytona Managed LLM API"
+    },
+    "none": {
+        "env_vars": [],
+        "package": None,
+        "description": "No LLM provider"
     }
 }
 
 SEARCH_PROVIDERS = {
     "brave": {
         "env_vars": ["BRAVE_API_KEY"],
-        "package": "brave-search>=0.1.0",
+        "package": "httpx>=0.24.0",  # Using httpx instead of a dedicated brave-search package
         "description": "Brave Search API"
+    },
+    "browserbase": {
+        "env_vars": ["BROWSERBASE_API_KEY"],
+        "package": "browserbase>=0.1.0",
+        "description": "BrowserBase search and browsing API"
+    },
+    "google": {
+        "env_vars": ["GOOGLE_API_KEY", "GOOGLE_CSE_ID"],
+        "package": "google-api-python-client>=2.0.0",
+        "description": "Google Custom Search API"
     },
     "none": {
         "env_vars": [],
@@ -54,6 +74,16 @@ MEMORY_PROVIDERS = {
         "package": "supabase>=0.7.0",
         "description": "Supabase vector database"
     },
+    "chromadb": {
+        "env_vars": ["OPENAI_API_KEY"],  # For embeddings, but can be configured to use others
+        "package": "chromadb>=0.4.0",
+        "description": "ChromaDB local vector database"
+    },
+    "pinecone": {
+        "env_vars": ["PINECONE_API_KEY", "PINECONE_ENVIRONMENT"],
+        "package": "pinecone-client>=2.2.0",
+        "description": "Pinecone vector database"
+    },
     "none": {
         "env_vars": [],
         "package": None,
@@ -61,11 +91,22 @@ MEMORY_PROVIDERS = {
     }
 }
 
+# Update the LOGGING_PROVIDERS dictionary to include LogFire and other options
 LOGGING_PROVIDERS = {
     "logfire": {
         "env_vars": ["LOGFIRE_API_KEY"],
-        "package": "logfire>=0.1.0",
+        "package": "logfire>=0.9.0",
         "description": "LogFire observability platform"
+    },
+    "prometheus": {
+        "env_vars": [],  # No API keys needed for Prometheus
+        "package": "prometheus-client>=0.16.0",
+        "description": "Prometheus metrics exporter"
+    },
+    "langfuse": {
+        "env_vars": ["LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"],
+        "package": "langfuse>=1.0.0",
+        "description": "Langfuse LLM observability"
     },
     "none": {
         "env_vars": [],
@@ -74,18 +115,23 @@ LOGGING_PROVIDERS = {
     }
 }
 
+# Add more utility packages
 UTILITY_PACKAGES = {
-    "puppeteer": {
-        "package": "pyppeteer>=1.0.0",
-        "description": "Headless Chrome/Chromium automation"
+    "pydantic-ai": {
+        "package": "pydantic-ai>=0.1.0",
+        "description": "Pydantic-based AI model integration"
     },
-    "dotenv": {
-        "package": "python-dotenv>=1.0.0",
-        "description": "Environment variable management"
+    "tiktoken": {
+        "package": "tiktoken>=0.4.0",
+        "description": "Fast BPE tokenizer from OpenAI"
     },
-    "none": {
-        "package": None,
-        "description": "No utility package"
+    "jinja2": {
+        "package": "jinja2>=3.0.0",
+        "description": "Template engine for Python"
+    },
+    "fastapi": {
+        "package": "fastapi>=0.100.0 uvicorn>=0.20.0",
+        "description": "FastAPI web framework for building APIs"
     }
 }
 

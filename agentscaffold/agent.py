@@ -187,7 +187,7 @@ class DaytonaTestAgentPydanticResult(BaseModel):
 
 class BaseAgent(BaseModel):
     \"\"\"Base agent implementation.\"\"\"
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True,extra="allow")
     
     name: str = "BaseAgent"
     description: str = ""
@@ -288,11 +288,10 @@ class Agent(BaseAgent):
     \"\"\"DaytonaTestAgent implementation.\"\"\"
     
     # Use ConfigDict to set model config
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True,extra="allow")
     
     name: str = "DaytonaTestAgent"
     description: str = "A daytona-test-agent agent"
-    pydantic_agent: Optional[Any] = None  # Added the field definition
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -320,8 +319,52 @@ class Agent(BaseAgent):
             Agent output
         \"\"\"
         try:
+            message = input_data["message"]
+            context = input_data.get("context", {})
             metadata = {}
             
+            # Start logging if provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                if not getattr(self.logging_provider, 'conversation_id', None):
+                    self.logging_provider.start_conversation(user_id=context.get("user_id"))
+                self.logging_provider.log_user_message(message)
+            
+            # Check if search is requested
+            search_query = context.get("search_query")
+            if search_query and hasattr(self, 'search_provider') and self.search_provider:
+                try:
+                    search_results = self.search_provider.search(search_query, num_results=3)
+                    metadata["search_results"] = search_results
+                    context["search_results"] = self.search_provider.search_with_snippets(search_query)
+                except Exception as search_error:
+                    print(f"Error performing search: {search_error}")
+                    metadata["search_error"] = str(search_error)
+            
+            # Check if context retrieval is requested
+            retrieve_context = context.get("retrieve_context", False)
+            context_query = context.get("context_query", message)
+            if retrieve_context and hasattr(self, 'memory_provider') and self.memory_provider:
+                try:
+                    memory_context = self.memory_provider.get_context(context_query)
+                    context["memory_context"] = memory_context
+                    metadata["memory_retrieval"] = True
+                except Exception as memory_error:
+                    print(f"Error retrieving from memory: {memory_error}")
+                    metadata["memory_error"] = str(memory_error)
+
+            # Build enhanced prompt with context and search results
+            enhanced_message = message
+
+            # Add retrieved context to the message if available
+            if context.get("memory_context"):
+                enhanced_message = f"Context from memory:\n{context['memory_context']}\n\nUser message: {message}"
+            
+            # Add search results to the message if available
+            if context.get("search_results"):
+                enhanced_message = f"Search results:\n{context['search_results']}\n\nUser message: {message}"
+            
+        
+                
             # Try to use PydanticAgent first
             try:
                 result = await self.pydantic_agent.run(input_data["message"])
@@ -346,18 +389,57 @@ class Agent(BaseAgent):
                 metadata["detected_intent"] = "help_request"
             elif "thank" in message:
                 metadata["detected_intent"] = "gratitude"
-                
-            # Return response with metadata
-            return {
+
+
+            # Store in memory if provider is available
+            store_in_memory = input_data.get("store_in_memory") or context.get("store_in_memory", False)
+            if store_in_memory and hasattr(self, 'memory_provider') and self.memory_provider:
+                try:
+                    memory_metadata = {
+                        "timestamp": time.time(),
+                        "source": "conversation",
+                        "user_message": message,
+                        "agent_response": response_message
+                    }
+                    entry_id = self.memory_provider.add(f"User: {message}\nAgent: {response_message}", memory_metadata)
+                    metadata["memory_entry_id"] = entry_id
+                except Exception as memory_error:
+                    print(f"Error storing in memory: {memory_error}")
+                    metadata["memory_store_error"] = str(memory_error)  
+
+            # Log agent response if logging provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                self.logging_provider.log_agent_message(response, metadata=metadata)
+        
+            # Prepare the output
+            output = {
                 "response": response_message,
                 "metadata": {**additional_info, **metadata}
             }
+
+            # Log the output if logging provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                self.logging_provider.log_output(output)
+
+            # Add search_results to output if available
+            if "search_results" in metadata:
+                output["search_results"] = metadata["search_results"]
+            
+            # Add memory_context to output if available
+            if "memory_context" in context:
+                output["memory_context"] = context["memory_context"]
+            
+            return output
             
         except Exception as e:
+            # Log the error if logging provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                self.logging_provider.log_error(e, context=input_data)
+            
             # Handle any errors
             return {
-                "response": f"Error: {e}",
-                "metadata": {"error": True}
+                "response": f"Error: {str(e)}",
+                "metadata": {"error": True, "error_details": str(e)}
             }
 """
         
@@ -621,7 +703,7 @@ async def main(input_data):
     try:
         agent = Agent()
         print(f"Agent initialized: {{agent.name}}")
-        result = await agent.process(input_data)
+        result = await agent.run(input_data)
         return result
     except Exception as e:
         print(f"Error in main: {{e}}")
@@ -1003,16 +1085,12 @@ class Agent(BaseModel):
     """Base agent class for AgentScaffold."""
     
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
-    pydantic_agent: Optional[Any] = None
 
-    
     name: str = "BaseAgent"  # Provide a default value for name
     description: str = ""
     input_class: ClassVar[Type[AgentInput]] = AgentInput
     output_class: ClassVar[Type[AgentOutput]] = AgentOutput
     pydantic_agent: Optional[Any] = None
-    
-   
     
     def __init__(self, **data):
         # Handle missing name field by providing a default
@@ -1020,10 +1098,24 @@ class Agent(BaseModel):
             data["name"] = "BaseAgent"
             
         super().__init__(**data)
-        # Don't set runtime directly here
         self._runtime = DaytonaRuntime()
-
         print(f"Agent initialized: {self.name}")
+
+        # Initialize providers
+        # Search provider
+        self.search_provider = None
+        if hasattr(self, '_init_search'):
+            self.search_provider = self._init_search()
+        
+        # Memory provider
+        self.memory_provider = None
+        if hasattr(self, '_init_memory'):
+            self.memory_provider = self._init_memory()
+        
+        # Logging provider
+        self.logging_provider = None
+        if hasattr(self, '_init_logging'):
+            self.logging_provider = self._init_logging()
 
     @property
     def runtime(self):
@@ -1112,3 +1204,5 @@ class Agent(BaseModel):
             print(f"Error validating output: {str(output_error)}")
             # Return the raw result if validation fails
             return result
+        
+    

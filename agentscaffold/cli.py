@@ -293,7 +293,7 @@ def new(
 def run(
     agent_dir: Annotated[Optional[str], typer.Option(help="Directory containing the agent")] = ".",
     message: Annotated[Optional[str], typer.Option("--message", "-m", help="Message to process")] = None,
-    interactive: Annotated[bool, typer.Option("--interactive", "-i", help="Run in interactive mode")] = False,
+    interactive: Annotated[bool, typer.Option("--interactive/--no-interactive", "-i", help="Interactive prompts for configuration")] = True,
     search: Annotated[Optional[str], typer.Option("--search", "-s", help="Search query")] = None,
     context: Annotated[bool, typer.Option("--context", "-c", help="Retrieve context from memory")] = False,
     context_query: Annotated[Optional[str], typer.Option(help="Query for context retrieval")] = None,

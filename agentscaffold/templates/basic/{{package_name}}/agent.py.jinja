@@ -1,9 +1,10 @@
 """Agent implementation for {{agent_name}}."""
 
 import os
+import time
 import json
-import inspect
-from typing import Dict, Any, Optional, List, ClassVar, Type
+import asyncio
+from typing import Dict, Any, List, Optional, ClassVar, Type, Union
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -33,13 +34,21 @@ except ImportError:
 
     class BaseAgent(BaseModel):
         """Minimal base agent implementation."""
-        model_config = ConfigDict(arbitrary_types_allowed=True)
+        model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
         
         name: str = "MinimalAgent"
         description: str = ""
-        runtime: Optional[Any] = None
         
-        def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        def __init__(self, **data):
+            super().__init__(**data)
+            self._runtime = DaytonaRuntime()
+        
+        @property
+        def runtime(self):
+            """Get the DaytonaRuntime instance."""
+            return self._runtime
+            
+        async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
             """Process input data and generate output."""
             return {"response": f"Processed: {input_data['message']}", "metadata": {}}
         
@@ -48,14 +57,37 @@ except ImportError:
             if isinstance(input_data, str):
                 input_data = {"message": input_data}
                 
-            # Create a simple validated input
-            validated_input = {"message": input_data.get("message", ""), "context": input_data.get("context", {})}
+            # Check if we should force Daytona execution
+            force_daytona = input_data.get("context", {}).get("force_daytona", False)
             
             # Process the input
-            result = self.process(validated_input)
-            
-            # Return the result as a dict
-            return result
+            try:
+                if force_daytona and hasattr(self, 'runtime'):
+                    # Force Daytona execution
+                    import os
+                    import inspect
+                    
+                    # Get the module file path where the agent class is defined
+                    agent_module = inspect.getmodule(self.__class__)
+                    if agent_module is None:
+                        raise RuntimeError("Cannot determine agent module")
+                    
+                    agent_file = agent_module.__file__
+                    if agent_file is None:
+                        raise RuntimeError("Cannot determine agent file path")
+                    
+                    agent_dir = os.path.dirname(os.path.abspath(agent_file))
+                    print(f"Forcing Daytona execution. Using agent directory: {agent_dir}")
+                    
+                    result = await self.runtime.execute(agent_dir, input_data)
+                else:
+                    # Local execution
+                    result = await self.process(input_data)
+                
+                return result
+            except Exception as e:
+                print(f"Error running agent: {e}")
+                return {"response": f"Error: {e}", "metadata": {"error": True}}
     
     # Fallback minimal PydanticAgent
     class PydanticAgent:
@@ -129,6 +161,83 @@ except ImportError:
                         self.data = type('ResultData', (), data)
                 return MinimalResult(result_data)
 
+# Import provider implementations if available
+{% if search_provider == "brave" %}
+try:
+    from agentscaffold.providers.search.brave import BraveSearchProvider
+except ImportError:
+    # Fallback implementation
+    class BraveSearchProvider:
+        """Fallback Brave Search Provider implementation."""
+        def __init__(self, api_key=None):
+            self.api_key = api_key or os.environ.get("BRAVE_API_KEY")
+            print("Warning: Using fallback BraveSearchProvider. Install httpx for full functionality.")
+            
+        def search(self, query, num_results=5, **kwargs):
+            """Search implementation."""
+            return []
+            
+        def search_with_snippets(self, query, num_results=3):
+            """Generate formatted snippets."""
+            return f"No search results available for: {query}"
+{% endif %}
+
+{% if memory_provider == "chromadb" %}
+try:
+    from agentscaffold.providers.memory.chromadb import ChromaDBMemoryProvider
+except ImportError:
+    # Fallback implementation
+    class ChromaDBMemoryProvider:
+        """Fallback ChromaDB Memory Provider implementation."""
+        def __init__(self, collection_name="agent_memory", **kwargs):
+            self.collection_name = collection_name
+            print("Warning: Using fallback ChromaDBMemoryProvider. Install chromadb for full functionality.")
+            
+        def add(self, text, metadata=None):
+            """Add implementation."""
+            return "fallback-id"
+            
+        def get_context(self, query, n_results=3, as_string=True):
+            """Get context implementation."""
+            return "" if as_string else []
+{% endif %}
+
+{% if logging_provider == "logfire" %}
+try:
+    from agentscaffold.providers.logging.logfire import LogFireProvider
+except ImportError:
+    # Fallback implementation
+    class LogFireProvider:
+        """Fallback LogFire Provider implementation."""
+        def __init__(self, api_key=None, service_name="agent", **kwargs):
+            self.api_key = api_key or os.environ.get("LOGFIRE_API_KEY")
+            self.service_name = service_name
+            self.conversation_id = None
+            print("Warning: Using fallback LogFireProvider. Install logfire for full functionality.")
+            
+        def start_conversation(self, user_id=None):
+            """Start a conversation."""
+            import uuid
+            self.conversation_id = str(uuid.uuid4())
+            return self.conversation_id
+            
+        def log_user_message(self, message, metadata=None):
+            """Log a user message."""
+            pass
+            
+        def log_agent_message(self, message, metadata=None):
+            """Log an agent message."""
+            pass
+            
+        def log_error(self, error, context=None):
+            """Log an error."""
+            print(f"Error: {error}")
+            
+        def end_conversation(self, metadata=None):
+            """End a conversation."""
+            self.conversation_id = None
+{% endif %}
+
 
 class {{agent_class_name}}Input(AgentInput):
     """Input for {{agent_class_name}} agent."""
@@ -140,8 +249,8 @@ class {{agent_class_name}}Input(AgentInput):
     {% if memory_provider != "none" %}
     retrieve_context: bool = Field(default=False, description="Whether to retrieve context from memory")
     context_query: Optional[str] = Field(None, description="Optional query for retrieving context")
+    store_in_memory: bool = Field(default=False, description="Whether to store the conversation in memory")
     {% endif %}
-    pass
 
 
 class {{agent_class_name}}Output(AgentOutput):
@@ -152,9 +261,8 @@ class {{agent_class_name}}Output(AgentOutput):
     search_results: Optional[List[Dict[str, Any]]] = Field(None, description="Search results if any")
     {% endif %}
     {% if memory_provider != "none" %}
-    context: Optional[List[Dict[str, Any]]] = Field(None, description="Retrieved context if any")
+    memory_context: Optional[str] = Field(None, description="Retrieved context if any")
     {% endif %}
-    pass
 
 
 class {{agent_class_name}}PydanticResult(BaseModel):
@@ -167,8 +275,8 @@ class {{agent_class_name}}PydanticResult(BaseModel):
 class Agent(BaseAgent):
     """{{agent_class_name}} agent implementation."""
     
-    # Use ConfigDict to set model config
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    # Use ConfigDict to set model config with extra="allow" to allow dynamic field assignment
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
     
     name: str = "{{agent_class_name}}"
     description: str = "A {{agent_name}} agent"
@@ -177,6 +285,12 @@ class Agent(BaseAgent):
     input_class: ClassVar[Type[AgentInput]] = {{agent_class_name}}Input
     output_class: ClassVar[Type[AgentOutput]] = {{agent_class_name}}Output
     
+    # Include fields for all providers and dynamic components
+    pydantic_agent: Optional[Any] = None
+    search_provider: Optional[Any] = None
+    memory_provider: Optional[Any] = None
+    logging_provider: Optional[Any] = None
+    
     def __init__(self, **data):
         super().__init__(**data)
             
@@ -184,17 +298,17 @@ class Agent(BaseAgent):
         try:
             self.pydantic_agent = PydanticAgent(
                 {% if llm_provider == "openai" %}
-                "gpt-4o",  # Correct format for pydantic_ai
+                "openai:gpt-4o",  # Correct format for pydantic_ai
                 {% elif llm_provider == "anthropic" %}
-                "anthropic/claude-3-opus-20240229",  # Correct format for pydantic_ai
+                "anthropic:claude-3-opus-20240229",  # Correct format for pydantic_ai
                 {% elif llm_provider == "daytona" %}
-                "gpt-4o",  # Fallback to OpenAI
+                "openai:gpt-4o",  # Fallback to OpenAI
                 {% elif llm_provider == "huggingface" %}
                 "huggingface/mistralai/Mistral-7B-Instruct-v0.2",  # Correct format for pydantic_ai
                 {% elif llm_provider == "ollama" %}
-                "gpt-4o",  # Fallback to OpenAI
+                "openai:gpt-4o",  # Fallback to OpenAI
                 {% else %}
-                "gpt-4o",  # Fallback to OpenAI
+                "openai:gpt-4o",  # Fallback to OpenAI
                 {% endif %}
                 result_type={{agent_class_name}}PydanticResult,
                 system_prompt=(
@@ -207,7 +321,7 @@ class Agent(BaseAgent):
             try:
                 # Try a basic OpenAI model as fallback
                 self.pydantic_agent = PydanticAgent(
-                    "gpt-3.5-turbo",
+                    "openai:gpt-3.5-turbo",
                     result_type={{agent_class_name}}PydanticResult,
                     system_prompt="You are a helpful assistant."
                 )
@@ -215,136 +329,70 @@ class Agent(BaseAgent):
                 print(f"Warning: Error initializing fallback PydanticAgent: {fallback_error}")
                 # Use our custom minimal implementation as last resort
                 self.pydantic_agent = PydanticAgent(
-                    "gpt-4o",
+                    "openai:gpt-4o",
                     result_type={{agent_class_name}}PydanticResult
                 )
         
+        # Initialize providers
         {% if search_provider != "none" %}
         # Initialize search provider
-        self.search = self._init_search()
+        try:
+            {% if search_provider == "brave" %}
+            self.search_provider = BraveSearchProvider()
+            print(f"Initialized Brave Search provider")
+            {% endif %}
+        except Exception as e:
+            print(f"Error initializing search provider: {e}")
+            self.search_provider = None
+        {% else %}
+        self.search_provider = None
         {% endif %}
         
         {% if memory_provider != "none" %}
         # Initialize memory provider
-        self.memory = self._init_memory()
+        try:
+            {% if memory_provider == "chromadb" %}
+            self.memory_provider = ChromaDBMemoryProvider(collection_name="{{agent_name}}_memory")
+            print(f"Initialized ChromaDB memory provider")
+            {% elif memory_provider == "supabase" %}
+            # Existing SupabaseMemoryProvider initialization
+            self.memory_provider = self._init_memory()
+            {% endif %}
+        except Exception as e:
+            print(f"Error initializing memory provider: {e}")
+            self.memory_provider = None
+        {% else %}
+        self.memory_provider = None
         {% endif %}
         
         {% if logging_provider != "none" %}
         # Initialize logging provider
-        self.logging = self._init_logging()
-        {% endif %}
-    
-    {% if search_provider != "none" %}
-    def _init_search(self):
-        """Initialize search provider."""
         try:
-            {% if search_provider == "brave" %}
-            from brave_search import BraveSearch
-            api_key = os.getenv("BRAVE_API_KEY")
-            if api_key:
-                return BraveSearch(api_key=api_key)
-            {% elif search_provider == "browserbase" %}
-            from browserbase import BrowserBase
-            api_key = os.getenv("BROWSERBASE_API_KEY")
-            if api_key:
-                return BrowserBase(api_key=api_key)
-            {% endif %}
-        except ImportError:
-            print(f"Warning: {search_provider} package not installed. Search functionality disabled.")
-        return None
-    
-    async def search_web(self, query: str) -> List[Dict[str, Any]]:
-        """Search the web for information."""
-        if not self.search or not query:
-            return []
-        
-        try:
-            {% if search_provider == "brave" %}
-            results = await self.search.search(query, count=5)
-            return [
-                {"title": r.title, "url": r.url, "description": r.description}
-                for r in results.web.results
-            ]
-            {% elif search_provider == "browserbase" %}
-            results = await self.search.search(query, limit=5)
-            return [
-                {"title": r.title, "url": r.url, "description": r.snippet}
-                for r in results
-            ]
+            {% if logging_provider == "logfire" %}
+            self.logging_provider = LogFireProvider(service_name="{{agent_name}}")
+            print(f"Initialized LogFire logging provider")
             {% endif %}
         except Exception as e:
-            print(f"Search error: {str(e)}")
-            return []
-    {% endif %}
+            print(f"Error initializing logging provider: {e}")
+            self.logging_provider = None
+        {% else %}
+        self.logging_provider = None
+        {% endif %}
+        
+        print(f"Agent initialized: {self.name}")
     
-    {% if memory_provider != "none" %}
+    {% if memory_provider == "supabase" %}
     def _init_memory(self):
         """Initialize memory provider."""
         try:
-            {% if memory_provider == "supabase" %}
             from supabase import create_client
             url = os.getenv("SUPABASE_URL")
             key = os.getenv("SUPABASE_KEY")
             if url and key:
                 return create_client(url, key)
-            {% elif memory_provider == "milvus" %}
-            from pymilvus import connections, Collection
-            uri = os.getenv("MILVUS_URI")
-            if uri:
-                connections.connect(uri=uri)
-                return Collection("agent_memory")
-            {% elif memory_provider == "chromadb" %}
-            import chromadb
-            db_path = os.getenv("CHROMA_DB_PATH", "./chroma_db")
-            client = chromadb.PersistentClient(path=db_path)
-            return client.get_or_create_collection("agent_memory")
-            {% endif %}
         except ImportError:
-            print(f"Warning: {memory_provider} package not installed. Memory functionality disabled.")
+            print("Warning: supabase package not installed. Memory functionality disabled.")
         return None
-    
-    async def retrieve_from_memory(self, query: str) -> List[Dict[str, Any]]:
-        """Retrieve context from memory."""
-        if not self.memory or not query:
-            return []
-        
-        try:
-            {% if memory_provider == "supabase" %}
-            # Using pgvector via Supabase
-            # This assumes you have a properly set up table and embedding function
-            embedding = await self._get_embedding(query)
-            result = self.memory.table("memories").select("*").execute()
-            return result.data
-            {% elif memory_provider == "milvus" %}
-            # Using Milvus
-            embedding = await self._get_embedding(query)
-            search_params = {"metric_type": "L2", "params": {"nprobe": 10}}
-            results = self.memory.search(
-                data=[embedding],
-                anns_field="embedding",
-                param=search_params,
-                limit=5,
-                output_fields=["text", "metadata"],
-            )
-            return [hit.__dict__ for hit in results[0]]
-            {% elif memory_provider == "chromadb" %}
-            # Using ChromaDB
-            results = self.memory.query(
-                query_texts=[query],
-                n_results=5,
-            )
-            items = []
-            for i in range(len(results["ids"][0])):
-                items.append({
-                    "id": results["ids"][0][i],
-                    "text": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i],
-                })
-            return items
-            {% endif %}
-        except Exception as e:
-            print(f"Memory retrieval error: {str(e)}")
-            return []
     
     async def _get_embedding(self, text: str) -> List[float]:
         """Get embedding for text using OpenAI or local alternative."""
@@ -362,30 +410,6 @@ class Agent(BaseAgent):
             return [0.0] * 1536
     {% endif %}
     
-    {% if logging_provider != "none" %}
-    def _init_logging(self):
-        """Initialize logging provider."""
-        try:
-            {% if logging_provider == "logfire" %}
-            import logfire
-            api_key = os.getenv("LOGFIRE_API_KEY")
-            if api_key:
-                logfire.init(api_key=api_key)
-                return logfire
-            {% endif %}
-        except ImportError:
-            print(f"Warning: {logging_provider} package not installed. Logging functionality disabled.")
-        return None
-    
-    def log_event(self, event_name: str, **kwargs):
-        """Log an event with the logging provider."""
-        if self.logging:
-            try:
-                self.logging.info(event_name, **kwargs)
-            except Exception as e:
-                print(f"Logging error: {str(e)}")
-    {% endif %}
-    
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Process input data and generate output.
@@ -397,65 +421,53 @@ class Agent(BaseAgent):
             Agent output
         """
         try:
+            message = input_data["message"]
+            context = input_data.get("context", {})
             metadata = {}
             
-            {% if logging_provider != "none" %}
-            # Log the request
-            self.log_event("agent_request", input=input_data["message"])
-            {% endif %}
+            # Start logging if provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                if not getattr(self.logging_provider, 'conversation_id', None):
+                    self.logging_provider.start_conversation(user_id=context.get("user_id"))
+                self.logging_provider.log_user_message(message)
             
-            {% if search_provider != "none" %}
             # Handle search if requested
-            search_results = []
-            search_query = input_data.get("context", {}).get("search_query")
-            if search_query:
-                {% if logging_provider != "none" %}
-                self.log_event("search_request", query=search_query)
-                {% endif %}
-                search_results = await self.search_web(search_query)
-                metadata["search_results"] = search_results
+            {% if search_provider != "none" %}
+            search_query = input_data.get("search_query") or context.get("search_query")
+            if search_query and hasattr(self, 'search_provider') and self.search_provider:
+                try:
+                    search_results = self.search_provider.search(search_query, num_results=3)
+                    metadata["search_results"] = search_results
+                    context["search_results"] = self.search_provider.search_with_snippets(search_query)
+                except Exception as search_error:
+                    print(f"Error performing search: {search_error}")
+                    metadata["search_error"] = str(search_error)
             {% endif %}
             
-            {% if memory_provider != "none" %}
             # Handle memory retrieval if requested
-            context = []
-            if input_data.get("context", {}).get("retrieve_context", False):
-                context_query = input_data.get("context", {}).get("context_query", input_data["message"])
-                {% if logging_provider != "none" %}
-                self.log_event("memory_request", query=context_query)
-                {% endif %}
-                context = await self.retrieve_from_memory(context_query)
-                metadata["context"] = context
+            {% if memory_provider != "none" %}
+            retrieve_context = input_data.get("retrieve_context") or context.get("retrieve_context", False)
+            context_query = input_data.get("context_query") or context.get("context_query", message)
+            if retrieve_context and hasattr(self, 'memory_provider') and self.memory_provider:
+                try:
+                    memory_context = self.memory_provider.get_context(context_query)
+                    context["memory_context"] = memory_context
+                    metadata["memory_retrieval"] = True
+                except Exception as memory_error:
+                    print(f"Error retrieving from memory: {memory_error}")
+                    metadata["memory_error"] = str(memory_error)
             {% endif %}
             
             # Build enhanced prompt with context and search results
-            enhanced_message = input_data["message"]
+            enhanced_message = message
             
-            {% if search_provider != "none" or memory_provider != "none" %}
-            context_additions = []
+            # Add retrieved context to the message if available
+            if context.get("memory_context"):
+                enhanced_message = f"Context from memory:\n{context['memory_context']}\n\nUser message: {message}"
             
-            {% if search_provider != "none" %}
-            if search_results:
-                search_context = "\n\nSearch Results:\n"
-                for i, result in enumerate(search_results[:3]):  # Limit to top 3 results
-                    search_context += f"{i+1}. {result['title']} - {result['url']}\n{result['description']}\n"
-                context_additions.append(search_context)
-            {% endif %}
-            
-            {% if memory_provider != "none" %}
-            if context:
-                memory_context = "\n\nRelevant Context:\n"
-                for i, item in enumerate(context[:3]):  # Limit to top 3 items
-                    if "text" in item:
-                        memory_context += f"{i+1}. {item['text']}\n"
-                    elif "content" in item:
-                        memory_context += f"{i+1}. {item['content']}\n"
-                context_additions.append(memory_context)
-            {% endif %}
-            
-            if context_additions:
-                enhanced_message = enhanced_message + "\n\n" + "\n".join(context_additions)
-            {% endif %}
+            # Add search results to the message if available
+            if context.get("search_results"):
+                enhanced_message = f"Search results:\n{context['search_results']}\n\nUser message: {message}"
             
             # Process with Pydantic AI
             try:
@@ -465,42 +477,58 @@ class Agent(BaseAgent):
             except Exception as e:
                 print(f"Error in pydantic_agent.run: {str(e)}")
                 # Fallback response
-                response_message = f"I received your message: {input_data['message']}. However, I encountered an error while processing."
+                response_message = f"I received your message: '{message}'. However, I encountered an error while processing."
                 additional_info = {"error": str(e)}
             
-            {% if logging_provider != "none" %}
-            # Log the response
-            self.log_event("agent_response", response=response_message)
+            # Store in memory if requested
+            {% if memory_provider != "none" %}
+            store_in_memory = input_data.get("store_in_memory") or context.get("store_in_memory", False)
+            if store_in_memory and hasattr(self, 'memory_provider') and self.memory_provider:
+                try:
+                    memory_metadata = {
+                        "timestamp": time.time(),
+                        "source": "conversation",
+                        "user_message": message,
+                        "agent_response": response_message
+                    }
+                    entry_id = self.memory_provider.add(f"User: {message}\nAgent: {response_message}", memory_metadata)
+                    metadata["memory_entry_id"] = entry_id
+                except Exception as memory_error:
+                    print(f"Error storing in memory: {memory_error}")
+                    metadata["memory_store_error"] = str(memory_error)
             {% endif %}
             
-            # Return response with metadata
-            response = {
+            # Log agent response if logging provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                self.logging_provider.log_agent_message(response_message, metadata=metadata)
+            
+            # Prepare the output
+            output = {
                 "response": response_message,
                 "metadata": {**additional_info, **metadata}
             }
             
+            # Add search_results to output if available
             {% if search_provider != "none" %}
-            # Include search results in the output if available
-            if search_results:
-                response["search_results"] = search_results
+            if "search_results" in metadata:
+                output["search_results"] = metadata["search_results"]
             {% endif %}
             
+            # Add memory_context to output if available
             {% if memory_provider != "none" %}
-            # Include context in the output if available
-            if context:
-                response["context"] = context
+            if "memory_context" in context:
+                output["memory_context"] = context["memory_context"]
             {% endif %}
             
-            return response
+            return output
             
         except Exception as e:
-            {% if logging_provider != "none" %}
-            # Log the error
-            self.log_event("agent_error", error=str(e))
-            {% endif %}
+            # Log the error if logging provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                self.logging_provider.log_error(e, context=input_data)
             
             # Handle any errors
             return {
                 "response": f"Error: {str(e)}",
-                "metadata": {"error": True}
+                "metadata": {"error": True, "error_details": str(e)}
             }
