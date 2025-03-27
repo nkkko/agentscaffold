@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Main entry point for {{agent_name}} with mandatory Daytona execution."""
+"""Main entry point for test-agent with mandatory Daytona execution."""
 
 import os
 import sys
@@ -39,7 +39,7 @@ if not os.environ.get("DAYTONA_SERVER_URL"):
     print("❌ DAYTONA_SERVER_URL not set!")
 
 try:
-    from {{ package_name }}.agent import Agent
+    from test_agent.agent import Agent
 except ImportError as e:
     print(f"❌ Error importing agent: {e}")
     print("Make sure the package is installed (pip install -e .)")
@@ -102,19 +102,19 @@ async def main(input_data: Optional[Dict[str, Any]] = None):
     Returns:
         Agent output
     """
-    parser = argparse.ArgumentParser(description="Run the {{agent_name}} agent")
+    parser = argparse.ArgumentParser(description="Run the test-agent agent")
     parser.add_argument("--message", "-m", help="Message to process")
     parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
     
-    {% if search_provider != "none" %}
-    parser.add_argument("--search", "-s", help="Search query to use")
-    {% endif %}
     
-    {% if memory_provider != "none" %}
+    parser.add_argument("--search", "-s", help="Search query to use")
+    
+    
+    
     parser.add_argument("--context", "-c", action="store_true", help="Retrieve context from memory")
     parser.add_argument("--context-query", help="Query for context retrieval")
     parser.add_argument("--store", action="store_true", help="Store conversation in memory")
-    {% endif %}
+    
     
     args = parser.parse_args()
     
@@ -131,19 +131,19 @@ async def main(input_data: Optional[Dict[str, Any]] = None):
             input_data = {"message": args.message}
             
             # Add optional parameters if provided
-            {% if search_provider != "none" %}
+            
             if args.search:
                 input_data["search_query"] = args.search
-            {% endif %}
             
-            {% if memory_provider != "none" %}
+            
+            
             if args.context:
                 input_data["retrieve_context"] = True
             if args.context_query:
                 input_data["context_query"] = args.context_query
             if args.store:
                 input_data["store_in_memory"] = True
-            {% endif %}
+            
             
             result = await agent.run(input_data)
             print(f"\nAgent: {result.get('response')}")

@@ -301,8 +301,56 @@ def run(
     """
     Run an agent in the specified directory.
     """
+    # First load environment variables from .env file
+    try:
+        from dotenv import load_dotenv
+        env_path = os.path.join(agent_dir, '.env')
+        if os.path.exists(env_path):
+            load_dotenv(env_path)
+            typer.echo(f"Loaded environment variables from {env_path}")
+        else:
+            typer.echo(f"Warning: No .env file found at {env_path}")
+    except ImportError:
+        typer.echo("Warning: python-dotenv not installed, using system environment variables only")
+
+    # Check Daytona environment variables
+
+        """Run an agent in Daytona (mandatory cloud execution)."""
+        typer.echo("🚀 Starting agent in Daytona cloud environment...")
+    
+        # Verify Daytona requirements
+        required_vars = ["DAYTONA_API_KEY", "DAYTONA_SERVER_URL"]
+        missing_vars = [var for var in required_vars if not os.environ.get(var)]
+        if missing_vars:
+            typer.echo(f"Error: Missing required Daytona variables: {', '.join(missing_vars)}")
+            typer.echo("These must be set in your .env file or environment")
+            raise typer.Exit(1)
+        
+        typer.echo("\nPossible solutions:")
+        typer.echo("1. Add these variables to your .env file:")
+        typer.echo("   DAYTONA_API_KEY=your_api_key_here")
+        typer.echo("   DAYTONA_SERVER_URL=your_server_url_here")
+        typer.echo("   DAYTONA_TARGET=us (optional)")
+        typer.echo("\n2. Or set them in your shell environment before running:")
+        typer.echo("   export DAYTONA_API_KEY=your_api_key_here")
+        typer.echo("   export DAYTONA_SERVER_URL=your_server_url_here")
+        typer.echo("\n3. Make sure your .env file is in the agent directory")
+        
+        # Show current environment values (masking sensitive data)
+        typer.echo("\nCurrent environment values:")
+        for var in required_vars:
+            value = os.environ.get(var)
+            if value:
+                masked = value[:4] + '...' + value[-4:] if len(value) > 8 else '****'
+                typer.echo(f"  {var}={masked}")
+            else:
+                typer.echo(f"  {var}=[NOT SET]")
+        
+        raise typer.Exit(1)
+
     # Check if main.py exists
     main_py = os.path.join(agent_dir, "main.py")
+
     if not os.path.exists(main_py):
         typer.echo(f"Error: {typer.style(main_py, fg=typer.colors.RED)} not found.")
         

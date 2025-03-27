@@ -1,4 +1,4 @@
-"""Agent implementation for {{agent_name}}."""
+"""Agent implementation for test-agent."""
 
 import os
 import time
@@ -469,7 +469,7 @@ except Exception as e1:
                 self._daytona.remove(self.workspace)
 
 # Import provider implementations if available
-{% if search_provider == "brave" %}
+
 try:
     from agentscaffold.providers.search.brave import BraveSearchProvider
 except ImportError:
@@ -487,9 +487,9 @@ except ImportError:
         def search_with_snippets(self, query, num_results=3):
             """Generate formatted snippets."""
             return f"No search results available for: {query}"
-{% endif %}
 
-{% if memory_provider == "chromadb" %}
+
+
 try:
     from agentscaffold.providers.memory.chromadb import ChromaDBMemoryProvider
 except ImportError:
@@ -507,9 +507,9 @@ except ImportError:
         def get_context(self, query, n_results=3, as_string=True):
             """Get context implementation."""
             return "" if as_string else []
-{% endif %}
 
-{% if logging_provider == "logfire" %}
+
+
 try:
     from agentscaffold.providers.logging.logfire import LogFireProvider
 except ImportError:
@@ -543,36 +543,36 @@ except ImportError:
         def end_conversation(self, metadata=None):
             """End a conversation."""
             self.conversation_id = None
-{% endif %}
 
 
-class {{agent_class_name}}Input(AgentInput):
-    """Input for {{agent_class_name}} agent."""
+
+class TestAgentInput(AgentInput):
+    """Input for TestAgent agent."""
     
     # Add custom input fields here
-    {% if search_provider != "none" %}
+    
     search_query: Optional[str] = Field(None, description="Optional search query")
-    {% endif %}
-    {% if memory_provider != "none" %}
+    
+    
     retrieve_context: bool = Field(default=False, description="Whether to retrieve context from memory")
     context_query: Optional[str] = Field(None, description="Optional query for retrieving context")
     store_in_memory: bool = Field(default=False, description="Whether to store the conversation in memory")
-    {% endif %}
+    
 
 
-class {{agent_class_name}}Output(AgentOutput):
-    """Output for {{agent_class_name}} agent."""
+class TestAgentOutput(AgentOutput):
+    """Output for TestAgent agent."""
     
     # Add custom output fields here
-    {% if search_provider != "none" %}
+    
     search_results: Optional[List[Dict[str, Any]]] = Field(None, description="Search results if any")
-    {% endif %}
-    {% if memory_provider != "none" %}
+    
+    
     memory_context: Optional[str] = Field(None, description="Retrieved context if any")
-    {% endif %}
+    
 
 
-class {{agent_class_name}}PydanticResult(BaseModel):
+class TestAgentPydanticResult(BaseModel):
     """Result from Pydantic AI Agent."""
     
     message: str = Field(description="Response message")
@@ -580,17 +580,17 @@ class {{agent_class_name}}PydanticResult(BaseModel):
 
 
 class Agent(BaseAgent):
-    """{{agent_class_name}} agent implementation."""
+    """TestAgent agent implementation."""
     
     # Use ConfigDict to set model config with extra="allow" to allow dynamic field assignment
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
     
-    name: str = "{{agent_class_name}}"
-    description: str = "A {{agent_name}} agent"
+    name: str = "TestAgent"
+    description: str = "A test-agent agent"
     
     # Properly annotate class variables
-    input_class: ClassVar[Type[AgentInput]] = {{agent_class_name}}Input
-    output_class: ClassVar[Type[AgentOutput]] = {{agent_class_name}}Output
+    input_class: ClassVar[Type[AgentInput]] = TestAgentInput
+    output_class: ClassVar[Type[AgentOutput]] = TestAgentOutput
     
     # Include fields for all providers and dynamic components
     pydantic_agent: Optional[Any] = None
@@ -605,104 +605,58 @@ class Agent(BaseAgent):
         try:
             # We already have the PydanticAgent class available globally now
             self.pydantic_agent = PydanticAgent(
-                {% if llm_provider == "openai" %}
+                
                 "openai:gpt-4o",
-                {% elif llm_provider == "anthropic" %}
-                "anthropic:claude-3-opus-20240229",
-                {% elif llm_provider == "daytona" %}
-                "openai:gpt-4o",  # Fallback to OpenAI
-                {% elif llm_provider == "huggingface" %}
-                "huggingface/mistralai/Mistral-7B-Instruct-v0.2",
-                {% elif llm_provider == "ollama" %}
-                "openai:gpt-4o",  # Fallback to OpenAI
-                {% else %}
-                "openai:gpt-4o",  # Fallback to OpenAI
-                {% endif %}
-                result_type={{agent_class_name}}PydanticResult,
+                
+                result_type=TestAgentPydanticResult,
                 system_prompt=(
-                    "You are {{agent_class_name}}, an AI assistant designed to help with "
-                    "{{agent_name}}. Be helpful, concise, and accurate in your responses."
+                    "You are TestAgent, an AI assistant designed to help with "
+                    "test-agent. Be helpful, concise, and accurate in your responses."
                 )
             )
         except Exception as e:
             print(f"Error initializing PydanticAgent: {str(e)}")
         
         # Initialize providers
-        {% if search_provider != "none" %}
+        
         # Initialize search provider
         try:
-            {% if search_provider == "brave" %}
+            
             self.search_provider = BraveSearchProvider()
             print(f"Initialized Brave Search provider")
-            {% endif %}
+            
         except Exception as e:
             print(f"Error initializing search provider: {e}")
             self.search_provider = None
-        {% else %}
-        self.search_provider = None
-        {% endif %}
         
-        {% if memory_provider != "none" %}
+        
+        
         # Initialize memory provider
         try:
-            {% if memory_provider == "chromadb" %}
-            self.memory_provider = ChromaDBMemoryProvider(collection_name="{{agent_name}}_memory")
+            
+            self.memory_provider = ChromaDBMemoryProvider(collection_name="test-agent_memory")
             print(f"Initialized ChromaDB memory provider")
-            {% elif memory_provider == "supabase" %}
-            # Existing SupabaseMemoryProvider initialization
-            self.memory_provider = self._init_memory()
-            {% endif %}
+            
         except Exception as e:
             print(f"Error initializing memory provider: {e}")
             self.memory_provider = None
-        {% else %}
-        self.memory_provider = None
-        {% endif %}
         
-        {% if logging_provider != "none" %}
+        
+        
         # Initialize logging provider
         try:
-            {% if logging_provider == "logfire" %}
-            self.logging_provider = LogFireProvider(service_name="{{agent_name}}")
+            
+            self.logging_provider = LogFireProvider(service_name="test-agent")
             print(f"Initialized LogFire logging provider")
-            {% endif %}
+            
         except Exception as e:
             print(f"Error initializing logging provider: {e}")
             self.logging_provider = None
-        {% else %}
-        self.logging_provider = None
-        {% endif %}
+        
         
         print(f"✅ Agent initialized: {self.name}")
     
-    {% if memory_provider == "supabase" %}
-    def _init_memory(self):
-        """Initialize memory provider."""
-        try:
-            from supabase import create_client
-            url = os.getenv("SUPABASE_URL")
-            key = os.getenv("SUPABASE_KEY")
-            if url and key:
-                return create_client(url, key)
-        except ImportError:
-            print("Warning: supabase package not installed. Memory functionality disabled.")
-        return None
     
-    async def _get_embedding(self, text: str) -> List[float]:
-        """Get embedding for text using OpenAI or local alternative."""
-        try:
-            import openai
-            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-            response = client.embeddings.create(
-                model="text-embedding-3-small",
-                input=text,
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            print(f"Embedding error: {str(e)}")
-            # Return a zero vector as fallback (not ideal but prevents crashes)
-            return [0.0] * 1536
-    {% endif %}
     
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -726,7 +680,7 @@ class Agent(BaseAgent):
                 self.logging_provider.log_user_message(message)
             
             # Handle search if requested
-            {% if search_provider != "none" %}
+            
             search_query = input_data.get("search_query") or context.get("search_query")
             if search_query and hasattr(self, 'search_provider') and self.search_provider:
                 try:
@@ -736,10 +690,10 @@ class Agent(BaseAgent):
                 except Exception as search_error:
                     print(f"Error performing search: {search_error}")
                     metadata["search_error"] = str(search_error)
-            {% endif %}
+            
             
             # Handle memory retrieval if requested
-            {% if memory_provider != "none" %}
+            
             retrieve_context = input_data.get("retrieve_context") or context.get("retrieve_context", False)
             context_query = input_data.get("context_query") or context.get("context_query", message)
             if retrieve_context and hasattr(self, 'memory_provider') and self.memory_provider:
@@ -750,7 +704,7 @@ class Agent(BaseAgent):
                 except Exception as memory_error:
                     print(f"Error retrieving from memory: {memory_error}")
                     metadata["memory_error"] = str(memory_error)
-            {% endif %}
+            
             
             # Build enhanced prompt with context and search results
             enhanced_message = message
@@ -775,7 +729,7 @@ class Agent(BaseAgent):
                 additional_info = {"error": str(e)}
             
             # Store in memory if requested
-            {% if memory_provider != "none" %}
+            
             store_in_memory = input_data.get("store_in_memory") or context.get("store_in_memory", False)
             if store_in_memory and hasattr(self, 'memory_provider') and self.memory_provider:
                 try:
@@ -790,7 +744,7 @@ class Agent(BaseAgent):
                 except Exception as memory_error:
                     print(f"Error storing in memory: {memory_error}")
                     metadata["memory_store_error"] = str(memory_error)
-            {% endif %}
+            
             
             # Log agent response if logging provider is available
             if hasattr(self, 'logging_provider') and self.logging_provider:
@@ -803,16 +757,16 @@ class Agent(BaseAgent):
             }
             
             # Add search_results to output if available
-            {% if search_provider != "none" %}
+            
             if "search_results" in metadata:
                 output["search_results"] = metadata["search_results"]
-            {% endif %}
+            
             
             # Add memory_context to output if available
-            {% if memory_provider != "none" %}
+            
             if "memory_context" in context:
                 output["memory_context"] = context["memory_context"]
-            {% endif %}
+            
             
             return output
             

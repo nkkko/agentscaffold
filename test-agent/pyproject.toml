@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "test_agent"
+version = "0.1.0"
+description = "A test-agent agent built with AgentScaffold"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0.0",
+    "agentscaffold",
+    "pydantic-ai",
+    "daytona-sdk",
+    "python-dotenv",
+
+    "openai>=1.0.0",
+
+
+
+    "brave-search>=0.1.0",
+
+
+
+    "chromadb>=0.4.0",
+
+
+
+    "logfire>=0.1.0",
+
+]
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I"]

@@ -33,10 +33,10 @@ LLM_PROVIDERS = {
         "package": "anthropic>=0.5.0",
         "description": "Anthropic API (Claude)"
     }, 
-    "daytona": {
-        "env_vars": ["DAYTONA_API_KEY", "DAYTONA_SERVER_URL", "DAYTONA_TARGET"],
-        "package": "daytona-sdk>=0.1.0",
-        "description": "Daytona Managed LLM API"
+     "ollama": {
+        "env_vars": ["OLLAMA_BASE_URL"],
+        "package": "ollama>=0.1.0",
+        "description": "Ollama local LLM server"
     },
     "none": {
         "env_vars": [],
@@ -133,6 +133,12 @@ UTILITY_PACKAGES = {
         "package": "fastapi>=0.100.0 uvicorn>=0.20.0",
         "description": "FastAPI web framework for building APIs"
     }
+}
+
+# Default Daytona configuration
+DAYTONA_CONFIG = {
+    "env_vars": ["DAYTONA_API_KEY", "DAYTONA_SERVER_URL", "DAYTONA_TARGET"],
+    "description": "Daytona API for secure execution"
 }
 
 
@@ -363,7 +369,7 @@ def get_agent_settings(name: Optional[str] = None) -> Dict[str, Any]:
     # LLM Provider
     llm_provider_choices = list(LLM_PROVIDERS.keys())
     llm_provider_display = [f"{k} - {v['description']}" for k, v in LLM_PROVIDERS.items()]
-    llm_default = defaults.get('llm_provider', 'daytona')
+    llm_default = defaults.get('llm_provider', 'openai')
     llm_provider = prompt_choice("Select LLM provider:", llm_provider_choices, default=llm_default)
     
     # Prompt for API keys based on provider
@@ -413,7 +419,7 @@ def get_agent_settings(name: Optional[str] = None) -> Dict[str, Any]:
     # Utility packages
     utility_choices = list(UTILITY_PACKAGES.keys())
     utility_display = [f"{k} - {v['description']}" for k, v in UTILITY_PACKAGES.items()]
-    utility_defaults = defaults.get('utilities', ['dotenv'])
+    utility_defaults = defaults.get('utilities', [])
     utilities = prompt_multiple_choice("Select utility packages:", utility_choices, defaults=utility_defaults)
     
     # Save as defaults?
@@ -476,6 +482,7 @@ def generate_dependencies(
         "pydantic>=2.0.0",
         "agentscaffold",
         "pydantic-ai",
+        "daytona-sdk>=0.1.0",  # Always include daytona-sdk
     ]
     
     # Add LLM provider package
@@ -510,6 +517,7 @@ def generate_env_vars(
 ) -> Dict[str, str]:
     """
     Generate environment variables based on selected providers.
+    Always includes Daytona environment variables.
     
     Args:
         llm_provider: LLM provider
@@ -541,6 +549,13 @@ def generate_env_vars(
     if logging_provider != "none" and logging_provider in LOGGING_PROVIDERS:
         for var in LOGGING_PROVIDERS[logging_provider]["env_vars"]:
             env_vars[var] = ""
+    
+    # Always include Daytona environment variables
+    for var in DAYTONA_CONFIG["env_vars"]:
+        env_vars[var] = ""
+    
+    # Add the FORCE_DAYTONA flag to always use Daytona
+    env_vars["FORCE_DAYTONA"] = "true"
     
     return env_vars
 
@@ -616,12 +631,15 @@ def create_new_agent(
         for env_var, value in settings["env_vars"].items():
             env_example_content += f"{env_var}={value}\n"
         
-        # Add Daytona environment variables
+        # Always ensure Daytona environment variables are included
         env_example_content += """
-# Daytona configuration (required for 'agentscaffold run')
+# Daytona configuration (required for secure execution)
 DAYTONA_API_KEY=your-daytona-api-key
 DAYTONA_SERVER_URL=your-daytona-server-url
 DAYTONA_TARGET=us
+
+# Force Daytona execution (true/false)
+FORCE_DAYTONA=true
 """
         
         with open(env_example_path, 'w') as f:
@@ -631,10 +649,11 @@ DAYTONA_TARGET=us
     env_path = os.path.join(agent_dir, '.env')
     if "api_keys" in settings and settings["api_keys"]:
         # Create a .env file with the provided API keys
-        env_content = """# Environment variables for {{agent_name}}
+        env_content = """# Environment variables for {}
 # Generated with actual API keys during setup
 
-"""
+""".format(settings["agent_name"])
+        
         # Add API keys from settings
         for key, value in settings["api_keys"].items():
             if value:  # Only add if the value is not empty
@@ -645,12 +664,15 @@ DAYTONA_TARGET=us
             if env_var not in settings["api_keys"]:  # Skip if already added as an API key
                 env_content += f"{env_var}={value}\n"
         
-        # Add Daytona configuration
+        # Always ensure Daytona environment variables are included
         env_content += """
-# Daytona configuration (required for 'agentscaffold run')
+# Daytona configuration (required for secure execution)
 DAYTONA_API_KEY=
 DAYTONA_SERVER_URL=
 DAYTONA_TARGET=us
+
+# Force Daytona execution (true/false)
+FORCE_DAYTONA=true
 """
         
         with open(env_path, 'w') as f:
@@ -668,6 +690,44 @@ DAYTONA_TARGET=us
                 typer.echo(f"Created {env_path} (copied from .env.example)")
             else:
                 print(f"Created {env_path} (copied from .env.example)")
+
+    # Add .gitignore if it doesn't exist
+    gitignore_path = os.path.join(agent_dir, '.gitignore')
+    if not os.path.exists(gitignore_path):
+        gitignore_content = """# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Local development files
+.DS_Store
+"""
+        with open(gitignore_path, 'w') as f:
+            f.write(gitignore_content)
+        if HAS_TYPER:
+            typer.echo(f"Created {gitignore_path}")
+        else:
+            print(f"Created {gitignore_path}")
 
 
 def _render_template_file(
@@ -707,3 +767,5 @@ def _render_template_file(
         
     if HAS_TYPER:
         typer.echo(f"Created {output_file_path}")
+    else:
+        print(f"Created {output_file_path}")
