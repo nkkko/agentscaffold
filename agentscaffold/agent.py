@@ -201,10 +201,12 @@ class DaytonaRuntime:
             print(f"❌ Error cleaning up workspace: {e}")
     
     def _prepare_execution_code(self, input_base64, conversation_id):
-        """Generate optimized execution code with proper directory handling."""
+        """Generate optimized execution code with memory and logging capabilities."""
         return f"""
 import sys, os, json, base64, traceback, asyncio
 from typing import Dict, Any, Optional, List
+import time
+import uuid
 
 # Check if directory exists before changing to it
 if not os.path.exists('/home/daytona/agent'):
@@ -252,6 +254,10 @@ brave_api_key = os.environ.get("BRAVE_API_KEY")
 if brave_api_key:
     print(f"Found Brave API key in Daytona (length: {{len(brave_api_key)}})")
 
+logfire_api_key = os.environ.get("LOGFIRE_API_KEY")
+if logfire_api_key:
+    print(f"Found LogFire API key in Daytona (length: {{len(logfire_api_key)}})")
+
 # Conversation ID for persistent memory
 CONVERSATION_ID = "{conversation_id}"
 print(f"🔄 Processing message in conversation: {{CONVERSATION_ID}}")
@@ -263,7 +269,127 @@ input_data = json.loads(input_json)
 message = input_data.get('message', '')
 print(f"📩 Received message: '{{message}}'")
 
-# Minimal bare-bones search implementation using only standard library
+# --- MEMORY IMPLEMENTATION ---
+# Simple in-memory storage for this session
+conversation_history = []
+
+# Function to read conversation history from a file
+def read_conversation_history():
+    history_file = '/home/daytona/agent/conversation_history.json'
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error reading conversation history: {{e}}")
+    return []
+
+# Function to save conversation history to a file
+def save_conversation_history(history):
+    history_file = '/home/daytona/agent/conversation_history.json'
+    try:
+        with open(history_file, 'w') as f:
+            json.dump(history, f)
+        print(f"Saved {{len(history)}} conversation entries to file")
+    except Exception as e:
+        print(f"Error saving conversation history: {{e}}")
+
+# Load conversation history
+conversation_history = read_conversation_history()
+print(f"Loaded {{len(conversation_history)}} conversation entries from history")
+
+# Function to add a memory entry
+def add_to_memory(text, metadata=None):
+    metadata = metadata or {{}}
+    entry = {{
+        "id": str(uuid.uuid4()),
+        "text": text,
+        "timestamp": time.time(),
+        "metadata": metadata
+    }}
+    conversation_history.append(entry)
+    save_conversation_history(conversation_history)
+    return entry["id"]
+
+# Function to retrieve context from memory
+def get_context(query, n_results=3):
+    if not conversation_history:
+        return ""
+    
+    # Simple keyword matching (in a real implementation, use embeddings)
+    relevant = []
+    for entry in conversation_history:
+        if query.lower() in entry['text'].lower():
+            relevant.append(entry)
+    
+    # Sort by recency if there are no keyword matches
+    if not relevant:
+        # Get most recent entries
+        relevant = sorted(conversation_history, key=lambda x: x.get('timestamp', 0), reverse=True)[:n_results]
+    else:
+        # Limit to n_results
+        relevant = relevant[:n_results]
+    
+    # Format as string
+    if relevant:
+        return "\\n\\n".join([f"Memory {{i+1}}:\\n{{m['text']}}" for i, m in enumerate(relevant)])
+    return ""
+
+# --- LOGGING IMPLEMENTATION ---
+def log_event(event_type, data):
+    "\"\"\"Log an event to a file and try LogFire if available.\"\"\"
+    log_entry = {{
+        "event_type": event_type,
+        "timestamp": time.time(),
+        "conversation_id": CONVERSATION_ID,
+        "data": data
+    }}
+    
+    # Log to file
+    log_file = '/home/daytona/agent/agent_log.jsonl'
+    try:
+        with open(log_file, 'a') as f:
+            f.write(json.dumps(log_entry) + '\\n')
+    except Exception as e:
+        print(f"Error writing to log file: {{e}}")
+    
+    # Try LogFire if available
+    if logfire_api_key:
+        try:
+            import urllib.request
+            import urllib.parse
+            import urllib.error
+            
+            url = "https://api.logfire.dev/api/v1/log"
+            headers = {{
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {{logfire_api_key}}"
+            }}
+            
+            log_data = {{
+                "event": event_type,
+                "conversation_id": CONVERSATION_ID,
+                **data
+            }}
+            
+            req = urllib.request.Request(
+                url, 
+                data=json.dumps(log_data).encode('utf-8'),
+                headers=headers,
+                method="POST"
+            )
+            
+            with urllib.request.urlopen(req, timeout=5) as response:
+                response_data = response.read().decode('utf-8')
+                print(f"LogFire log successful: {{response_data}}")
+                
+        except Exception as e:
+            print(f"Error logging to LogFire: {{e}}")
+
+# Log user message
+log_event("user_message", {{"message": message}})
+
+# --- SEARCH IMPLEMENTATION ---
 def perform_search(query, api_key=None):
     \"\"\"Simple search implementation using only standard library.\"\"\"
     print(f"Performing search for: {{query}}")
@@ -312,9 +438,14 @@ def perform_search(query, api_key=None):
             {{"title": f"Result 2 for {{query}}", "url": "https://example.com/2", "snippet": f"Another sample result for {{query}}"}},
         ]
 
+# --- MAIN EXECUTION LOGIC ---
 # Check if this is a search request
 search_keywords = ["search", "look up", "find", "google", "information about", "what is", "tell me about"]
 is_search_request = any(keyword in message.lower() for keyword in search_keywords)
+
+# Check if this is a memory request
+memory_keywords = ["remember", "memory", "previous", "recall", "earlier", "before", "last time"]
+is_memory_request = any(keyword in message.lower() for keyword in memory_keywords)
 
 # Try to handle the request
 try:
@@ -334,8 +465,17 @@ try:
         # Format the results
         formatted_results = "\\n".join([f"{{i+1}}. {{r['title']}}\\n   {{r['url']}}\\n   {{r['snippet']}}" for i, r in enumerate(results)])
         
+        response_text = f"Here's what I found for '{{search_query}}':\\n\\n{{formatted_results}}"
+        
+        # Store in memory
+        add_to_memory(f"User: {{message}}\\nAgent: {{response_text}}", {{"type": "search", "query": search_query}})
+        
+        # Log the search and response
+        log_event("search", {{"query": search_query, "results": results}})
+        log_event("agent_response", {{"response": response_text, "type": "search"}})
+        
         response = {{
-            "response": f"Here's what I found for '{{search_query}}':\\n\\n{{formatted_results}}",
+            "response": response_text,
             "metadata": {{"search_results": results}}
         }}
         
@@ -343,23 +483,68 @@ try:
         print(json.dumps(response))
         sys.exit(0)  # Exit successfully after processing
     
-    # For non-search requests, use a simple response
-    response = {{
-        "response": f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search capabilities. You can ask me to search for information by saying 'search for [topic]'.",
-        "metadata": {{"conversation_id": CONVERSATION_ID}}
-    }}
-    print(json.dumps(response))
+    # If it's a memory request, retrieve and provide context
+    elif is_memory_request:
+        context = get_context(message)
+        
+        if context:
+            response_text = f"Here's what I remember from our previous conversation:\\n\\n{{context}}"
+        else:
+            response_text = "I don't have any relevant memories from our previous conversations yet."
+        
+        # Store this interaction
+        add_to_memory(f"User: {{message}}\\nAgent: {{response_text}}", {{"type": "memory_retrieval"}})
+        
+        # Log the memory retrieval
+        log_event("memory_retrieval", {{"query": message, "found": bool(context)}})
+        log_event("agent_response", {{"response": response_text, "type": "memory"}})
+        
+        response = {{
+            "response": response_text,
+            "metadata": {{"memory_retrieval": True, "conversation_id": CONVERSATION_ID}}
+        }}
+        
+        print("✅ Memory retrieval successful")
+        print(json.dumps(response))
+        sys.exit(0)
+    
+    # For regular messages, provide a response with conversation context
+    else:
+        # Get recent context
+        context = get_context("")  # Empty query gets most recent items
+        
+        if context:
+            response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask about our previous conversation.\\n\\nBased on our conversation history:\\n{{context}}"
+        else:
+            response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask me to remember our conversation later."
+        
+        # Store this interaction
+        add_to_memory(f"User: {{message}}\\nAgent: {{response_text}}", {{"type": "conversation"}})
+        
+        # Log the regular message
+        log_event("regular_message", {{"message": message}})
+        log_event("agent_response", {{"response": response_text, "type": "regular"}})
+        
+        response = {{
+            "response": response_text,
+            "metadata": {{"conversation_id": CONVERSATION_ID}}
+        }}
+        
+        print(json.dumps(response))
     
 except Exception as e:
     # Ultimate fallback
     print(f"❌ Critical error: {{e}}")
     traceback.print_exc()
+    
+    # Log the error
+    log_event("error", {{"error": str(e), "traceback": traceback.format_exc()}})
+    
     print(json.dumps({{
         "response": "I encountered a system error. Please try again later.",
         "metadata": {{"error": True, "critical": True}}
     }}))
 """
-    
     async def execute(self, agent_dir: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Execute agent in Daytona workspace with proper directory handling."""
         # Exit command handling
