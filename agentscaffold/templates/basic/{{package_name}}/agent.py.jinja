@@ -1,26 +1,575 @@
 """Agent implementation for {{agent_name}}."""
 
 import os
+import time
 import json
-from typing import Dict, Any, Optional
+import asyncio
+import inspect
+import sys
+from typing import Dict, Any, List, Optional, ClassVar, Type, Union
+from pathlib import Path
 
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent as PydanticAgent
-from agentscaffold.agent import Agent as BaseAgent, AgentInput, AgentOutput
+from pydantic import BaseModel, Field, ConfigDict
+
+# Define our own PydanticAgent first to ensure it's always available
+class PydanticAgent:
+    """Minimal PydanticAgent implementation when pydantic_ai is not available."""
+    
+    def __init__(self, model_name, result_type=None, system_prompt=None):
+        self.model_name = model_name
+        self.result_type = result_type
+        self.system_prompt = system_prompt
+        print(f"Using fallback PydanticAgent with model {model_name}")
+    
+    async def run(self, message):
+        """Run the agent with the provided message."""
+        try:
+            # Try to import a direct LLM client based on model_name prefix
+            if "openai" in self.model_name.lower():
+                # Try OpenAI
+                import openai
+                client = openai.OpenAI()
+                # Use a default model name if needed
+                model_name = "gpt-4o"
+                if "/" in self.model_name:
+                    model_name = self.model_name.split("/", 1)[1]
+                elif ":" in self.model_name:
+                    model_name = self.model_name.split(":", 1)[1]
+                    
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=[
+                        {"role": "system", "content": self.system_prompt or "You are a helpful assistant."},
+                        {"role": "user", "content": message}
+                    ]
+                )
+                result_text = response.choices[0].message.content
+            elif "anthropic" in self.model_name.lower():
+                # Try Anthropic
+                import anthropic
+                client = anthropic.Anthropic()
+                # Use a default model name if needed
+                model_name = "claude-3-opus-20240229"
+                if "/" in self.model_name:
+                    model_name = self.model_name.split("/", 1)[1]
+                elif ":" in self.model_name:
+                    model_name = self.model_name.split(":", 1)[1]
+                    
+                response = client.messages.create(
+                    model=model_name,
+                    system=self.system_prompt or "You are a helpful assistant.",
+                    messages=[{"role": "user", "content": message}]
+                )
+                result_text = response.content[0].text
+            else:
+                # Fallback response
+                result_text = f"I received your message: {message}. However, I'm running in fallback mode without LLM access."
+            
+            # Create the result object
+            result_data = {"message": result_text, "additional_info": {}}
+            
+            # Create a simple result class
+            class MinimalResult:
+                def __init__(self, data):
+                    self.data = type('ResultData', (), data)
+            
+            return MinimalResult(result_data)
+        except Exception as e:
+            print(f"Error in fallback PydanticAgent: {str(e)}")
+            # Even more minimal fallback
+            result_data = {"message": f"I received your message, but encountered an error: {str(e)}", "additional_info": {"error": True}}
+            class MinimalResult:
+                def __init__(self, data):
+                    self.data = type('ResultData', (), data)
+            return MinimalResult(result_data)
+
+# Try to import from agentscaffold, but provide fallbacks if not available
+try:
+    from agentscaffold.agent import Agent as BaseAgent, AgentInput, AgentOutput
+    # Try to import from pydantic_ai (but we already have our fallback defined)
+    try:
+        from pydantic_ai import PydanticAgent as ExternalPydanticAgent
+        # Override our class with the real one
+        PydanticAgent = ExternalPydanticAgent
+        print("Successfully imported PydanticAgent from pydantic_ai")
+    except ImportError:
+        print("Using fallback PydanticAgent implementation")
+except ImportError:
+    # Fallback if agentscaffold is not available
+    class AgentInput(BaseModel):
+        """Base class for agent inputs."""
+        message: str = Field(..., description="Input message for the agent")
+        context: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
+
+    class AgentOutput(BaseModel):
+        """Base class for agent outputs."""
+        response: str = Field(..., description="Response from the agent")
+        metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+
+    class BaseAgent(BaseModel):
+        """Minimal base agent implementation."""
+        model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+        
+        name: str = "MinimalAgent"
+        description: str = ""
+        
+        def __init__(self, **data):
+            super().__init__(**data)
+            self._init_daytona_runtime()
+            # Always force Daytona by default
+            self.force_daytona = os.environ.get("FORCE_DAYTONA", "true").lower() in ["true", "1", "yes"]
+        
+        def _init_daytona_runtime(self):
+            """Initialize Daytona runtime."""
+            try:
+                from agentscaffold.agent import DaytonaRuntime
+                self._runtime = DaytonaRuntime()
+            except ImportError:
+                # Use our own DaytonaRuntime implementation
+                self._runtime = DaytonaRuntime()
+                
+        @property
+        def runtime(self):
+            """Get the DaytonaRuntime instance."""
+            return self._runtime
+            
+        async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+            """Process input data and generate output."""
+            return {"response": f"Processed: {input_data['message']}", "metadata": {}}
+        
+        async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+            """Run the agent with the provided input data."""
+            if isinstance(input_data, str):
+                input_data = {"message": input_data}
+                
+            # Check for exit command
+            if isinstance(input_data, dict) and input_data.get('message', '').lower().strip() in ['exit', 'quit', 'bye']:
+                print("Received exit command, cleaning up resources...")
+                return {
+                    "response": "Session ended. All resources have been cleaned up.",
+                    "metadata": {"exited": True}
+                }
+                
+            # Process the input
+            try:
+                # Force Daytona execution by default
+                agent_dir = os.path.dirname(os.path.abspath(inspect.getfile(self.__class__)))
+                print(f"🚀 Starting Daytona execution from {agent_dir}")
+                
+                result = await self.runtime.execute(agent_dir, input_data)
+                return result
+            except Exception as e:
+                print(f"Error running agent: {e}")
+                return {"response": f"Error: {e}", "metadata": {"error": True}}
+
+# We need the Daytona runtime in the agent file for better integration
+class DaytonaRuntime:
+    """Daytona runtime for agent execution."""
+    
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        self.config = config or {}
+        self.workspace = None
+        self._daytona = None
+        self._CreateWorkspaceParams = None
+        
+        # Load environment variables first
+        self._load_env_vars()
+        
+        # Verify Daytona configuration with better error handling
+        if not os.environ.get("DAYTONA_API_KEY"):
+            print("⚠️ DAYTONA_API_KEY environment variable is required")
+        else:
+            print(f"✅ Loaded .env (DAYTONA_API_KEY=***{os.environ.get('DAYTONA_API_KEY')[-4:] if len(os.environ.get('DAYTONA_API_KEY', '')) > 4 else ''})")
+        
+        if not os.environ.get("DAYTONA_SERVER_URL"):
+            print("⚠️ DAYTONA_SERVER_URL environment variable is required")
+        
+        # Initialize Daytona SDK
+        self._load_daytona_sdk()
+    
+    def _load_env_vars(self):
+        """Load environment variables from .env file."""
+        try:
+            from dotenv import load_dotenv
+            # Try loading from multiple locations
+            for env_path in ['.env', '../.env']:
+                if os.path.exists(env_path):
+                    load_dotenv(env_path)
+                    break
+        except ImportError:
+            # Try manual loading if dotenv is not available
+            for env_path in ['.env', '../.env']:
+                if os.path.exists(env_path):
+                    with open(env_path, 'r') as f:
+                        for line in f:
+                            if line.strip() and not line.startswith('#') and '=' in line:
+                                key, value = line.strip().split('=', 1)
+                                os.environ[key.strip()] = value.strip()
+    
+    def _load_daytona_sdk(self):
+        """Load and verify Daytona SDK with better error handling."""
+        try:
+            from daytona_sdk import Daytona, CreateWorkspaceParams, DaytonaConfig
+            
+            # Configure from environment with fallbacks
+            api_key = os.environ.get("DAYTONA_API_KEY", self.config.get("api_key"))
+            server_url = os.environ.get("DAYTONA_SERVER_URL", self.config.get("server_url"))
+            target = os.environ.get("DAYTONA_TARGET", self.config.get("target", "us"))
+            
+            if not api_key:
+                print("❌ No Daytona API key found")
+                return
+                
+            daytona_config = DaytonaConfig(
+                api_key=api_key,
+                server_url=server_url,
+                target=target
+            )
+            
+            self._daytona = Daytona(daytona_config)
+            self._CreateWorkspaceParams = CreateWorkspaceParams
+            
+        except ImportError as e:
+            print(f"❌ daytona-sdk package not installed: {e}")
+        except Exception as e:
+            print(f"❌ Daytona initialization failed: {e}")
+    
+    def _simple_upload_agent_code(self, workspace, agent_dir: str) -> None:
+        """Upload agent code to the Daytona workspace."""
+        from pathlib import Path
+        import sys
+        import os
+        
+        # Create the workspace directory structure
+        remote_dir = "/home/daytona/agent"
+        try:
+            # Create directories
+            workspace.process.exec(f"mkdir -p {remote_dir}")
+            
+            # Upload .env file if available
+            for env_path in [Path(agent_dir) / ".env", Path(agent_dir).parent / ".env"]:
+                if env_path.exists():
+                    print(f"Uploading .env file from {env_path}...")
+                    with open(env_path, "rb") as f:
+                        content = f.read()
+                    workspace.fs.upload_file(f"{remote_dir}/.env", content)
+                    print("Successfully uploaded .env file")
+                    break
+            
+            # Upload essential files
+            essential_patterns = ["requirements.in", "requirements.txt", "pyproject.toml", "README.md"]
+            for pattern in essential_patterns:
+                for path in Path(agent_dir).glob(pattern):
+                    if path.is_file():
+                        filename = os.path.basename(path)
+                        with open(path, "rb") as f:
+                            content = f.read()
+                        workspace.fs.upload_file(f"{remote_dir}/{filename}", content)
+                        print(f"Uploaded {filename}")
+            
+            # Create __init__.py
+            workspace.fs.upload_file(f"{remote_dir}/__init__.py", b"# Package initialization")
+            
+            # Upload agent.py
+            agent_path = Path(agent_dir) / "agent.py"
+            if agent_path.exists():
+                with open(agent_path, "rb") as f:
+                    content = f.read()
+                workspace.fs.upload_file(f"{remote_dir}/agent.py", content)
+                
+            # Upload main.py
+            main_path = Path(agent_dir) / "main.py"
+            if main_path.exists():
+                with open(main_path, "rb") as f:
+                    content = f.read()
+                workspace.fs.upload_file(f"{remote_dir}/main.py", content)
+            
+            # Check for package directory
+            package_name = None
+            for item in os.listdir(agent_dir):
+                pkg_path = os.path.join(agent_dir, item)
+                if os.path.isdir(pkg_path) and os.path.exists(os.path.join(pkg_path, "__init__.py")):
+                    package_name = item
+                    pkg_dir = f"{remote_dir}/{package_name}"
+                    workspace.process.exec(f"mkdir -p {pkg_dir}")
+                    
+                    # Upload package files
+                    for root, dirs, files in os.walk(pkg_path):
+                        for file in files:
+                            if file.endswith('.py'):
+                                file_path = os.path.join(root, file)
+                                rel_path = os.path.relpath(file_path, pkg_path)
+                                remote_file_path = f"{pkg_dir}/{rel_path}"
+                                remote_file_dir = os.path.dirname(remote_file_path)
+                                workspace.process.exec(f"mkdir -p {remote_file_dir}")
+                                
+                                with open(file_path, "rb") as f:
+                                    content = f.read()
+                                workspace.fs.upload_file(remote_file_path, content)
+                    break
+            
+            # List directory contents to verify uploads
+            ls_result = workspace.process.exec(f"ls -la {remote_dir}")
+            print(f"Directory contents: {ls_result.result}")
+        
+        except Exception as e:
+            print(f"Error uploading agent code: {e}")
+    
+    def _get_required_packages(self, agent_dir: str) -> List[str]:
+        """Get required packages from requirements.in."""
+        packages = ["pydantic", "daytona-sdk", "python-dotenv", "openai"]
+        
+        requirements_path = os.path.join(agent_dir, "requirements.in")
+        if os.path.exists(requirements_path):
+            with open(requirements_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        package = line.split("#")[0].strip().split(">=")[0].split("==")[0].strip()
+                        if package and package not in packages:
+                            packages.append(package)
+        
+        return packages
+    
+    def _ensure_dependency(self, package: str, workspace) -> None:
+        """Install dependency in workspace."""
+        try:
+            workspace.process.exec(f"pip install {package} --break-system-packages")
+        except Exception as e:
+            print(f"Error installing {package}: {e}")
+    
+    def _prepare_execution_code(self, input_base64):
+        """Generate optimized execution code."""
+        return """
+import sys, os, json, base64, traceback, asyncio
+
+# Setup paths
+sys.path.append('/home/daytona/agent')
+sys.path.append('/home/daytona')
+os.chdir('/home/daytona/agent')
+
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    load_dotenv('/home/daytona/agent/.env')
+except ImportError:
+    # Manual env loading
+    if os.path.exists('/home/daytona/agent/.env'):
+        with open('/home/daytona/agent/.env', 'r') as f:
+            for line in f:
+                if line.strip() and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    os.environ[key.strip()] = value.strip()
+
+# Parse the input data
+input_base64 = "%s"
+input_json = base64.b64decode(input_base64).decode('utf-8')
+input_data = json.loads(input_json)
+
+# Try different import approaches
+try:
+    # First try importing the main module
+    from main import main
+    result = asyncio.run(main(input_data))
+    print(json.dumps(result))
+except Exception as e1:
+    print(f"Main module import failed: {e1}")
+    traceback.print_exc()
+    
+    # Try alternative approaches
+    try:
+        # Look for agent package
+        for item in os.listdir('.'):
+            if os.path.isdir(item) and os.path.exists(os.path.join(item, '__init__.py')):
+                # Found a package, try to import the agent
+                agent_module = __import__(f"{item}.agent", fromlist=['Agent'])
+                agent = agent_module.Agent()
+                result = asyncio.run(agent.process(input_data))
+                print(json.dumps(result))
+                break
+        else:
+            # No package found, try direct import
+            from agent import Agent
+            agent = Agent()
+            result = asyncio.run(agent.process(input_data))
+            print(json.dumps(result))
+    except Exception as e2:
+        print(f"Agent import failed: {e2}")
+        traceback.print_exc()
+        print(json.dumps({"response": f"Error running agent: {str(e2)}", "metadata": {"error": True}}))
+""" % input_base64
+    
+    async def execute(self, agent_dir: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute agent in Daytona workspace with improved logging."""
+        if not self._daytona:
+            return {
+                "response": "Error: Daytona SDK not initialized. Check your API keys and server URL.",
+                "metadata": {"error": True}
+            }
+            
+        print("🚀 Starting Daytona agent...")
+        
+        try:
+            params = self._CreateWorkspaceParams(language="python")
+            self.workspace = self._daytona.create(params)
+            print(f"🔧 Workspace ID: {(self.workspace.id)}")
+            
+            # Upload the code to Daytona
+            print("📤 Uploading code to Daytona...")
+            self._simple_upload_agent_code(self.workspace, agent_dir)
+            
+            # Install required packages
+            required_packages = self._get_required_packages(agent_dir)
+            for package in required_packages:
+                self._ensure_dependency(package, self.workspace)
+            
+            # Prepare input data
+            import base64
+            input_json = json.dumps(input_data)
+            input_base64 = base64.b64encode(input_json.encode('utf-8')).decode('utf-8')
+            
+            # Prepare and run the execution code
+            print("⚡ Running in Daytona...")
+            exec_code = self._prepare_execution_code(input_base64)
+            response = self.workspace.process.code_run(exec_code)
+            
+            # Parse the response
+            if response.exit_code != 0:
+                print(f"❌ Execution failed (exit code {response.exit_code})")
+                return {
+                    "response": f"Error executing agent in Daytona: {response.result}",
+                    "metadata": {"error": True}
+                }
+            
+            # Find JSON in the output
+            lines = response.result.strip().split('\n')
+            for line in reversed(lines):
+                try:
+                    result = json.loads(line)
+                    print("✅ Execution completed successfully")
+                    return result
+                except json.JSONDecodeError:
+                    continue
+            
+            # Fallback if no JSON found
+            return {
+                "response": "Execution completed but no valid response was returned.",
+                "metadata": {"raw_output": response.result}
+            }
+            
+        except Exception as e:
+            print(f"❌ Daytona execution error: {e}")
+            return {
+                "response": f"Error: {str(e)}",
+                "metadata": {"error": True}
+            }
+        finally:
+            if self.workspace:
+                print("🧹 Cleanup complete.")
+                self._daytona.remove(self.workspace)
+
+# Import provider implementations if available
+{% if search_provider == "brave" %}
+try:
+    from agentscaffold.providers.search.brave import BraveSearchProvider
+except ImportError:
+    # Fallback implementation
+    class BraveSearchProvider:
+        """Fallback Brave Search Provider implementation."""
+        def __init__(self, api_key=None):
+            self.api_key = api_key or os.environ.get("BRAVE_API_KEY")
+            print("Warning: Using fallback BraveSearchProvider. Install httpx for full functionality.")
+            
+        def search(self, query, num_results=5, **kwargs):
+            """Search implementation."""
+            return []
+            
+        def search_with_snippets(self, query, num_results=3):
+            """Generate formatted snippets."""
+            return f"No search results available for: {query}"
+{% endif %}
+
+{% if memory_provider == "chromadb" %}
+try:
+    from agentscaffold.providers.memory.chromadb import ChromaDBMemoryProvider
+except ImportError:
+    # Fallback implementation
+    class ChromaDBMemoryProvider:
+        """Fallback ChromaDB Memory Provider implementation."""
+        def __init__(self, collection_name="agent_memory", **kwargs):
+            self.collection_name = collection_name
+            print("Warning: Using fallback ChromaDBMemoryProvider. Install chromadb for full functionality.")
+            
+        def add(self, text, metadata=None):
+            """Add implementation."""
+            return "fallback-id"
+            
+        def get_context(self, query, n_results=3, as_string=True):
+            """Get context implementation."""
+            return "" if as_string else []
+{% endif %}
+
+{% if logging_provider == "logfire" %}
+try:
+    from agentscaffold.providers.logging.logfire import LogFireProvider
+except ImportError:
+    # Fallback implementation
+    class LogFireProvider:
+        """Fallback LogFire Provider implementation."""
+        def __init__(self, api_key=None, service_name="agent", **kwargs):
+            self.api_key = api_key or os.environ.get("LOGFIRE_API_KEY")
+            self.service_name = service_name
+            self.conversation_id = None
+            print("Warning: Using fallback LogFireProvider. Install logfire for full functionality.")
+            
+        def start_conversation(self, user_id=None):
+            """Start a conversation."""
+            import uuid
+            self.conversation_id = str(uuid.uuid4())
+            return self.conversation_id
+            
+        def log_user_message(self, message, metadata=None):
+            """Log a user message."""
+            pass
+            
+        def log_agent_message(self, message, metadata=None):
+            """Log an agent message."""
+            pass
+            
+        def log_error(self, error, context=None):
+            """Log an error."""
+            print(f"Error: {error}")
+            
+        def end_conversation(self, metadata=None):
+            """End a conversation."""
+            self.conversation_id = None
+{% endif %}
 
 
 class {{agent_class_name}}Input(AgentInput):
     """Input for {{agent_class_name}} agent."""
     
     # Add custom input fields here
-    pass
+    {% if search_provider != "none" %}
+    search_query: Optional[str] = Field(None, description="Optional search query")
+    {% endif %}
+    {% if memory_provider != "none" %}
+    retrieve_context: bool = Field(default=False, description="Whether to retrieve context from memory")
+    context_query: Optional[str] = Field(None, description="Optional query for retrieving context")
+    store_in_memory: bool = Field(default=False, description="Whether to store the conversation in memory")
+    {% endif %}
 
 
 class {{agent_class_name}}Output(AgentOutput):
     """Output for {{agent_class_name}} agent."""
     
     # Add custom output fields here
-    pass
+    {% if search_provider != "none" %}
+    search_results: Optional[List[Dict[str, Any]]] = Field(None, description="Search results if any")
+    {% endif %}
+    {% if memory_provider != "none" %}
+    memory_context: Optional[str] = Field(None, description="Retrieved context if any")
+    {% endif %}
 
 
 class {{agent_class_name}}PydanticResult(BaseModel):
@@ -33,22 +582,127 @@ class {{agent_class_name}}PydanticResult(BaseModel):
 class Agent(BaseAgent):
     """{{agent_class_name}} agent implementation."""
     
+    # Use ConfigDict to set model config with extra="allow" to allow dynamic field assignment
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
+    
     name: str = "{{agent_class_name}}"
     description: str = "A {{agent_name}} agent"
-    input_class = {{agent_class_name}}Input
-    output_class = {{agent_class_name}}Output
+    
+    # Properly annotate class variables
+    input_class: ClassVar[Type[AgentInput]] = {{agent_class_name}}Input
+    output_class: ClassVar[Type[AgentOutput]] = {{agent_class_name}}Output
+    
+    # Include fields for all providers and dynamic components
+    pydantic_agent: Optional[Any] = None
+    search_provider: Optional[Any] = None
+    memory_provider: Optional[Any] = None
+    logging_provider: Optional[Any] = None
     
     def __init__(self, **data):
         super().__init__(**data)
-        # Initialize Pydantic AI agent
-        self.pydantic_agent = PydanticAgent(
-            "openai:gpt-4o",  # Can be configured via environment variables
-            result_type={{agent_class_name}}PydanticResult,
-            system_prompt=(
-                "You are {{agent_class_name}}, an AI assistant designed to help with "
-                "{{agent_name}}. Be helpful, concise, and accurate in your responses."
+        
+        # Initialize Pydantic AI agent - using the global PydanticAgent class
+        try:
+            # We already have the PydanticAgent class available globally now
+            self.pydantic_agent = PydanticAgent(
+                {% if llm_provider == "openai" %}
+                "openai:gpt-4o",
+                {% elif llm_provider == "anthropic" %}
+                "anthropic:claude-3-opus-20240229",
+                {% elif llm_provider == "daytona" %}
+                "openai:gpt-4o",  # Fallback to OpenAI
+                {% elif llm_provider == "huggingface" %}
+                "huggingface/mistralai/Mistral-7B-Instruct-v0.2",
+                {% elif llm_provider == "ollama" %}
+                "openai:gpt-4o",  # Fallback to OpenAI
+                {% else %}
+                "openai:gpt-4o",  # Fallback to OpenAI
+                {% endif %}
+                result_type={{agent_class_name}}PydanticResult,
+                system_prompt=(
+                    "You are {{agent_class_name}}, an AI assistant designed to help with "
+                    "{{agent_name}}. Be helpful, concise, and accurate in your responses."
+                )
             )
-        )
+        except Exception as e:
+            print(f"Error initializing PydanticAgent: {str(e)}")
+        
+        # Initialize providers
+        {% if search_provider != "none" %}
+        # Initialize search provider
+        try:
+            {% if search_provider == "brave" %}
+            self.search_provider = BraveSearchProvider()
+            print(f"Initialized Brave Search provider")
+            {% endif %}
+        except Exception as e:
+            print(f"Error initializing search provider: {e}")
+            self.search_provider = None
+        {% else %}
+        self.search_provider = None
+        {% endif %}
+        
+        {% if memory_provider != "none" %}
+        # Initialize memory provider
+        try:
+            {% if memory_provider == "chromadb" %}
+            self.memory_provider = ChromaDBMemoryProvider(collection_name="{{agent_name}}_memory")
+            print(f"Initialized ChromaDB memory provider")
+            {% elif memory_provider == "supabase" %}
+            # Existing SupabaseMemoryProvider initialization
+            self.memory_provider = self._init_memory()
+            {% endif %}
+        except Exception as e:
+            print(f"Error initializing memory provider: {e}")
+            self.memory_provider = None
+        {% else %}
+        self.memory_provider = None
+        {% endif %}
+        
+        {% if logging_provider != "none" %}
+        # Initialize logging provider
+        try:
+            {% if logging_provider == "logfire" %}
+            self.logging_provider = LogFireProvider(service_name="{{agent_name}}")
+            print(f"Initialized LogFire logging provider")
+            {% endif %}
+        except Exception as e:
+            print(f"Error initializing logging provider: {e}")
+            self.logging_provider = None
+        {% else %}
+        self.logging_provider = None
+        {% endif %}
+        
+        print(f"✅ Agent initialized: {self.name}")
+    
+    {% if memory_provider == "supabase" %}
+    def _init_memory(self):
+        """Initialize memory provider."""
+        try:
+            from supabase import create_client
+            url = os.getenv("SUPABASE_URL")
+            key = os.getenv("SUPABASE_KEY")
+            if url and key:
+                return create_client(url, key)
+        except ImportError:
+            print("Warning: supabase package not installed. Memory functionality disabled.")
+        return None
+    
+    async def _get_embedding(self, text: str) -> List[float]:
+        """Get embedding for text using OpenAI or local alternative."""
+        try:
+            import openai
+            client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text,
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            print(f"Embedding error: {str(e)}")
+            # Return a zero vector as fallback (not ideal but prevents crashes)
+            return [0.0] * 1536
+    {% endif %}
     
     async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -61,17 +715,114 @@ class Agent(BaseAgent):
             Agent output
         """
         try:
-            # Process with Pydantic AI
-            result = await self.pydantic_agent.run(input_data['message'])
+            message = input_data["message"]
+            context = input_data.get("context", {})
+            metadata = {}
             
-            # Return response
-            return {
-                "response": result.data.message,
-                "metadata": result.data.additional_info
+            # Start logging if provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                if not getattr(self.logging_provider, 'conversation_id', None):
+                    self.logging_provider.start_conversation(user_id=context.get("user_id"))
+                self.logging_provider.log_user_message(message)
+            
+            # Handle search if requested
+            {% if search_provider != "none" %}
+            search_query = input_data.get("search_query") or context.get("search_query")
+            if search_query and hasattr(self, 'search_provider') and self.search_provider:
+                try:
+                    search_results = self.search_provider.search(search_query, num_results=3)
+                    metadata["search_results"] = search_results
+                    context["search_results"] = self.search_provider.search_with_snippets(search_query)
+                except Exception as search_error:
+                    print(f"Error performing search: {search_error}")
+                    metadata["search_error"] = str(search_error)
+            {% endif %}
+            
+            # Handle memory retrieval if requested
+            {% if memory_provider != "none" %}
+            retrieve_context = input_data.get("retrieve_context") or context.get("retrieve_context", False)
+            context_query = input_data.get("context_query") or context.get("context_query", message)
+            if retrieve_context and hasattr(self, 'memory_provider') and self.memory_provider:
+                try:
+                    memory_context = self.memory_provider.get_context(context_query)
+                    context["memory_context"] = memory_context
+                    metadata["memory_retrieval"] = True
+                except Exception as memory_error:
+                    print(f"Error retrieving from memory: {memory_error}")
+                    metadata["memory_error"] = str(memory_error)
+            {% endif %}
+            
+            # Build enhanced prompt with context and search results
+            enhanced_message = message
+            
+            # Add retrieved context to the message if available
+            if context.get("memory_context"):
+                enhanced_message = f"Context from memory:\n{context['memory_context']}\n\nUser message: {message}"
+            
+            # Add search results to the message if available
+            if context.get("search_results"):
+                enhanced_message = f"Search results:\n{context['search_results']}\n\nUser message: {message}"
+            
+            # Process with Pydantic AI
+            try:
+                result = await self.pydantic_agent.run(enhanced_message)
+                response_message = result.data.message
+                additional_info = result.data.additional_info
+            except Exception as e:
+                print(f"Error in pydantic_agent.run: {str(e)}")
+                # Fallback response
+                response_message = f"I received your message: '{message}'. However, I encountered an error while processing."
+                additional_info = {"error": str(e)}
+            
+            # Store in memory if requested
+            {% if memory_provider != "none" %}
+            store_in_memory = input_data.get("store_in_memory") or context.get("store_in_memory", False)
+            if store_in_memory and hasattr(self, 'memory_provider') and self.memory_provider:
+                try:
+                    memory_metadata = {
+                        "timestamp": time.time(),
+                        "source": "conversation",
+                        "user_message": message,
+                        "agent_response": response_message
+                    }
+                    entry_id = self.memory_provider.add(f"User: {message}\nAgent: {response_message}", memory_metadata)
+                    metadata["memory_entry_id"] = entry_id
+                except Exception as memory_error:
+                    print(f"Error storing in memory: {memory_error}")
+                    metadata["memory_store_error"] = str(memory_error)
+            {% endif %}
+            
+            # Log agent response if logging provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                self.logging_provider.log_agent_message(response_message, metadata=metadata)
+            
+            # Prepare the output
+            output = {
+                "response": response_message,
+                "metadata": {**additional_info, **metadata}
             }
+            
+            # Add search_results to output if available
+            {% if search_provider != "none" %}
+            if "search_results" in metadata:
+                output["search_results"] = metadata["search_results"]
+            {% endif %}
+            
+            # Add memory_context to output if available
+            {% if memory_provider != "none" %}
+            if "memory_context" in context:
+                output["memory_context"] = context["memory_context"]
+            {% endif %}
+            
+            return output
+            
         except Exception as e:
+            # Log the error if logging provider is available
+            if hasattr(self, 'logging_provider') and self.logging_provider:
+                self.logging_provider.log_error(e, context=input_data)
+            
             # Handle any errors
             return {
                 "response": f"Error: {str(e)}",
-                "metadata": {"error": True}
+                "metadata": {"error": True, "error_details": str(e)}
             }

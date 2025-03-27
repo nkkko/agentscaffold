@@ -2,11 +2,81 @@
 
 An AI agent built with AgentScaffold that uses Pydantic AI and runs in a secure Daytona sandbox environment.
 
+## Features
+
+{% if llm_provider == "openai" %}
+- Uses OpenAI API for language model capabilities
+{% elif llm_provider == "anthropic" %}
+- Uses Anthropic Claude API for language model capabilities
+{% elif llm_provider == "huggingface" %}
+- Uses Hugging Face Inference API for language model capabilities
+{% elif llm_provider == "ollama" %}
+- Uses Ollama for local language model capabilities
+{% elif llm_provider == "daytona" %}
+- Uses Daytona for managed language model capabilities
+{% endif %}
+
+{% if search_provider != "none" %}
+{% if search_provider == "brave" %}
+- Integrates Brave Search API for web search capabilities
+{% elif search_provider == "browserbase" %}
+- Integrates BrowserBase API for web search capabilities
+{% endif %}
+{% endif %}
+
+{% if memory_provider != "none" %}
+{% if memory_provider == "supabase" %}
+- Uses Supabase vector storage for memory and context retrieval
+{% elif memory_provider == "milvus" %}
+- Uses Milvus vector database for memory and context retrieval
+{% elif memory_provider == "chromadb" %}
+- Uses ChromaDB local vector database for memory and context retrieval
+{% endif %}
+{% endif %}
+
+{% if logging_provider != "none" %}
+{% if logging_provider == "logfire" %}
+- Includes LogFire integration for observability and logging
+{% endif %}
+{% endif %}
+
 ## Requirements
 
 - Python 3.10 or higher
 - Daytona sandbox environment (optional, falls back to direct execution if not available)
-- OpenAI API key (or other LLM provider supported by Pydantic AI)
+{% if llm_provider == "openai" %}
+- OpenAI API key
+{% elif llm_provider == "anthropic" %}
+- Anthropic API key
+{% elif llm_provider == "huggingface" %}
+- HuggingFace API key
+{% elif llm_provider == "ollama" %}
+- Ollama running locally or at a specified host
+{% endif %}
+
+{% if search_provider != "none" %}
+{% if search_provider == "brave" %}
+- Brave Search API key
+{% elif search_provider == "browserbase" %}
+- BrowserBase API key
+{% endif %}
+{% endif %}
+
+{% if memory_provider != "none" %}
+{% if memory_provider == "supabase" %}
+- Supabase account with vector extension enabled
+{% elif memory_provider == "milvus" %}
+- Milvus database instance
+{% elif memory_provider == "chromadb" %}
+- Local directory for ChromaDB storage
+{% endif %}
+{% endif %}
+
+{% if logging_provider != "none" %}
+{% if logging_provider == "logfire" %}
+- LogFire account and API key
+{% endif %}
+{% endif %}
 
 ## Installation
 
@@ -20,8 +90,50 @@ pip install -e .
 Create a `.env` file in the root directory with the following variables:
 
 ```
-# OpenAI API key (required)
+{% if llm_provider == "openai" %}
+# OpenAI API (required)
 OPENAI_API_KEY=your-openai-api-key
+{% elif llm_provider == "anthropic" %}
+# Anthropic API (required)
+ANTHROPIC_API_KEY=your-anthropic-api-key
+{% elif llm_provider == "huggingface" %}
+# HuggingFace API (required)
+HUGGINGFACE_API_KEY=your-huggingface-api-key
+{% elif llm_provider == "ollama" %}
+# Ollama (optional, defaults to localhost)
+OLLAMA_HOST=http://localhost:11434
+{% endif %}
+
+{% if search_provider != "none" %}
+{% if search_provider == "brave" %}
+# Brave Search API (required for search)
+BRAVE_API_KEY=your-brave-api-key
+{% elif search_provider == "browserbase" %}
+# BrowserBase API (required for search)
+BROWSERBASE_API_KEY=your-browserbase-api-key
+{% endif %}
+{% endif %}
+
+{% if memory_provider != "none" %}
+{% if memory_provider == "supabase" %}
+# Supabase (required for memory)
+SUPABASE_URL=your-supabase-url
+SUPABASE_KEY=your-supabase-key
+{% elif memory_provider == "milvus" %}
+# Milvus (required for memory)
+MILVUS_URI=your-milvus-uri
+{% elif memory_provider == "chromadb" %}
+# ChromaDB (optional, defaults to ./chroma_db)
+CHROMA_DB_PATH=./chroma_db
+{% endif %}
+{% endif %}
+
+{% if logging_provider != "none" %}
+{% if logging_provider == "logfire" %}
+# LogFire (required for logging)
+LOGFIRE_API_KEY=your-logfire-api-key
+{% endif %}
+{% endif %}
 
 # Daytona configuration (optional)
 DAYTONA_API_KEY=your-daytona-api-key
@@ -37,6 +149,28 @@ Run the agent with:
 python main.py
 ```
 
+Run the agent in interactive mode:
+
+```bash
+python main.py --interactive
+```
+
+{% if search_provider != "none" %}
+Include a search query:
+
+```bash
+python main.py --message "Tell me about climate change" --search "latest climate change research"
+```
+{% endif %}
+
+{% if memory_provider != "none" %}
+Retrieve context from memory:
+
+```bash
+python main.py --message "What did we discuss before?" --context
+```
+{% endif %}
+
 You can also use the agent in your own Python code:
 
 ```python
@@ -45,7 +179,16 @@ import asyncio
 
 async def example():
     agent = Agent()
-    result = await agent.run({"message": "Hello, what can you do?"})
+    result = await agent.run({
+        "message": "Hello, what can you do?",
+        {% if search_provider != "none" %}
+        "search_query": "AI agents",  # Optional
+        {% endif %}
+        {% if memory_provider != "none" %}
+        "retrieve_context": True,  # Optional
+        "context_query": "agent capabilities",  # Optional
+        {% endif %}
+    })
     print(result["response"])
 
 asyncio.run(example())
@@ -62,4 +205,22 @@ This agent runs in a Daytona sandbox environment when available, providing:
 
 ## Extending
 
-To customize this agent, edit the `{{package_name}}/agent.py` file to modify the `process` method.
+To customize this agent, edit the `{{package_name}}/agent.py` file to modify the `process` method. 
+
+{% if search_provider != "none" %}
+### Adding Search Providers
+
+To modify or enhance search capabilities, edit the `_init_search` and `search_web` methods in the agent class.
+{% endif %}
+
+{% if memory_provider != "none" %}
+### Enhancing Memory Capabilities
+
+To modify memory and context functionality, edit the `_init_memory` and `retrieve_from_memory` methods.
+{% endif %}
+
+{% if logging_provider != "none" %}
+### Configuring Observability
+
+To enhance logging and observability, modify the `_init_logging` and `log_event` methods.
+{% endif %}
