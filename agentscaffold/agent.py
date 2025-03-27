@@ -186,6 +186,7 @@ class DaytonaRuntime:
             
         except Exception as e:
             print(f"Error uploading agent code: {e}")
+   
     
     def _cleanup_workspace(self):
         """Clean up the workspace when done."""
@@ -199,7 +200,6 @@ class DaytonaRuntime:
             self._is_initialized = False
         except Exception as e:
             print(f"❌ Error cleaning up workspace: {e}")
-    
     def _prepare_execution_code(self, input_base64, conversation_id):
         """Generate optimized execution code with memory and logging capabilities."""
         return f"""
@@ -268,6 +268,7 @@ input_json = base64.b64decode(input_base64).decode('utf-8')
 input_data = json.loads(input_json)
 message = input_data.get('message', '')
 print(f"📩 Received message: '{{message}}'")
+
 
 # --- MEMORY IMPLEMENTATION ---
 # Simple in-memory storage for this session
@@ -630,6 +631,7 @@ except Exception as e:
     def cleanup_resources(self):
         """Clean up all resources when conversation ends."""
         self._cleanup_workspace()
+
 class BaseAgent(BaseModel):
     """Minimal base agent implementation."""
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")

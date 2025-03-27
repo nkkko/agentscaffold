@@ -1,11 +1,10 @@
-"""Logging provider implementation using LogFire."""
-
 import os
 import json
 import uuid
 import time
 import logging
-from typing import Dict, Any, List, Optional, Union, Callable
+import traceback
+from typing import Dict, Any, Optional, Union
 
 # Try to import optional dependencies
 try:
@@ -16,233 +15,252 @@ except ImportError:
     HAS_LOGFIRE = False
 
 class LogFireProvider:
-    """Logging provider using LogFire for observability."""
+    """Enhanced logging provider with direct HTTP logging to LogFire."""
     
     def __init__(
         self,
         api_key: Optional[str] = None,
         service_name: str = "agent",
         environment: str = "development",
-        enable_console: bool = True,
-        log_level: int = logging.INFO,
-        **kwargs
+        project_id: Optional[str] = None,
+        enable_console: bool = True
     ):
         """
-        Initialize the LogFire logging provider.
+        Initialize the enhanced LogFire logging provider.
         
         Args:
             api_key: LogFire API key (defaults to LOGFIRE_API_KEY env var)
             service_name: Name of the service for logging
             environment: Environment (development, staging, production)
+            project_id: LogFire project ID (optional, for direct HTTP logging)
             enable_console: Whether to log to console as well
-            log_level: Logging level (default: INFO)
-            **kwargs: Additional parameters for LogFire
         """
-        if not HAS_LOGFIRE:
-            print("Warning: logfire is not installed. Only basic console logging will be available.")
-            self._setup_basic_logging(service_name, log_level)
-            self.service_name = service_name
-            self.conversation_id = None
-            self.conversation_context = {}
-            self.start_time = None
-            return
-        
-        self.api_key = api_key or os.environ.get("LOGFIRE_API_KEY")
-        if not self.api_key:
-            print("Warning: LogFire API key is required. Set LOGFIRE_API_KEY environment variable or pass as api_key.")
-            print("Only basic console logging will be available.")
-            self._setup_basic_logging(service_name, log_level)
-            self.service_name = service_name
-            self.conversation_id = None
-            self.conversation_context = {}
-            self.start_time = None
-            return
-        
         self.service_name = service_name
         self.environment = environment
+        self.enable_console = enable_console
         
-        # Initialize LogFire - trying multiple initialization approaches
-        try:
-            self._initialize_logfire(service_name, environment, enable_console, log_level, **kwargs)
-        except Exception as e:
-            print(f"Error initializing LogFire: {e}")
-            self._setup_basic_logging(service_name, log_level)
+        # Get API key
+        self.api_key = api_key or os.environ.get("LOGFIRE_API_KEY")
+        self.project_id = project_id
         
-        # Create a logger for the agent
-        self.logger = logging.getLogger(service_name)
-        self.logger.setLevel(log_level)
+        # Set up logging
+        self._setup_logging()
         
-        # Keep track of conversation context
+        # Track conversation context
         self.conversation_id = None
-        self.conversation_context = {}
         self.start_time = None
-    
-    def _initialize_logfire(self, service_name, environment, enable_console, log_level, **kwargs):
-        """Initialize LogFire using multiple attempts with different API patterns."""
-        # Attempt 1: Latest LogFire API with configure method and token parameter
-        if hasattr(logfire, 'configure'):
+        self.messages = []
+        
+        # Initialize LogFire if available
+        self.logfire_sdk_working = False
+        if HAS_LOGFIRE and self.api_key:
             try:
-                # Clean kwargs to avoid unexpected argument errors
-                config_kwargs = kwargs.copy()
-                for k in ['token', 'api_key', 'api_token', 'service', 'service_name', 'environment', 'console', 'level']:
-                    if k in config_kwargs:
-                        del config_kwargs[k]
+                logfire.configure(token=self.api_key)
+                print(f"✅ Initialized LogFire SDK with token")
+                self.logfire_sdk_working = True
                 
-                # Try with token parameter
-                logfire.configure(
-                    token=self.api_key,
-                    service=service_name,
-                    environment=environment,
-                    console=enable_console,
-                    level=log_level,
-                    **config_kwargs
-                )
-                print(f"Initialized LogFire using configure() with token parameter")
-                return
-            except (TypeError, ValueError) as e:
-                print(f"LogFire configure attempt 1 failed: {e}")
-                
-                # Attempt 2: Try with api_token parameter
+                # Test the connection
                 try:
-                    logfire.configure(
-                        api_token=self.api_key,
-                        service=service_name,
-                        environment=environment,
-                        console=enable_console,
-                        level=log_level,
-                        **config_kwargs
-                    )
-                    print(f"Initialized LogFire using configure() with api_token parameter")
-                    return
-                except (TypeError, ValueError) as e:
-                    print(f"LogFire configure attempt 2 failed: {e}")
-                    
-                    # Attempt 3: Try with minimal parameters
-                    try:
-                        logfire.configure(
-                            token=self.api_key
-                        )
-                        print(f"Initialized LogFire using configure() with minimal parameters")
-                        return
-                    except (TypeError, ValueError) as e:
-                        print(f"LogFire configure attempt 3 failed: {e}")
+                    logfire.info("logfire_initialized", service=service_name, environment=environment)
+                    print("✅ Successfully sent test log to LogFire")
+                except Exception as e:
+                    print(f"⚠️ LogFire SDK initialized but test log failed: {e}")
+                    self.logfire_sdk_working = False
+            except Exception as e:
+                print(f"⚠️ Error initializing LogFire SDK: {e}")
+                self.logfire_sdk_working = False
+        else:
+            if not HAS_LOGFIRE:
+                print("⚠️ LogFire SDK not available, using HTTP fallback")
+            if not self.api_key:
+                print("⚠️ No LogFire API key provided, logs will only be saved locally")
         
-        # Attempt 4: Older LogFire API with init method
-        if hasattr(logfire, 'init'):
-            try:
-                # Clean kwargs to avoid unexpected argument errors
-                init_kwargs = kwargs.copy()
-                for k in ['token', 'api_key', 'api_token', 'service_name', 'environment', 'console', 'level']:
-                    if k in init_kwargs:
-                        del init_kwargs[k]
-                        
-                logfire.init(
-                    token=self.api_key,
-                    service_name=service_name,
-                    environment=environment,
-                    console=enable_console,
-                    level=log_level,
-                    **init_kwargs
-                )
-                print(f"Initialized LogFire using init() method")
-                return
-            except (TypeError, ValueError) as e:
-                print(f"LogFire init attempt failed: {e}")
-        
-        # Attempt 5: Check for alternate initialization methods
-        if hasattr(logfire, 'setup'):
-            try:
-                logfire.setup(
-                    api_key=self.api_key,
-                    service=service_name,
-                    **kwargs
-                )
-                print(f"Initialized LogFire using setup() method")
-                return
-            except (TypeError, ValueError) as e:
-                print(f"LogFire setup attempt failed: {e}")
-        
-        # If all attempts fail, try the most minimal approach
-        try:
-            # Find any method that might be for initialization
-            for method_name in dir(logfire):
-                if method_name.lower() in ['configure', 'init', 'setup', 'initialize']:
-                    method = getattr(logfire, method_name)
-                    if callable(method):
-                        try:
-                            # Try with just the API key
-                            method(self.api_key)
-                            print(f"Initialized LogFire using {method_name}() with just API key")
-                            return
-                        except Exception:
-                            pass
-        except Exception:
-            pass
-        
-        # If we reach here, all initialization attempts failed
-        raise ValueError("Could not initialize LogFire with any known method")
+        # Always attempt a direct HTTP log for verification
+        if self.api_key:
+            success = self._send_http_log("provider_initialized", {
+                "service": service_name,
+                "environment": environment,
+                "sdk_available": HAS_LOGFIRE,
+                "sdk_working": self.logfire_sdk_working
+            })
+            if success:
+                print("✅ Successfully sent initialization log via HTTP")
+            else:
+                print("⚠️ Failed to send initialization log via HTTP")
     
-    def _setup_basic_logging(self, service_name: str, log_level: int) -> None:
-        """Set up basic console logging as fallback."""
-        self.logger = logging.getLogger(service_name)
-        self.logger.setLevel(log_level)
+    def _setup_logging(self):
+        """Set up logging to console and file."""
+        # Create logger
+        self.logger = logging.getLogger(self.service_name)
+        self.logger.setLevel(logging.INFO)
+        self.logger.handlers = []  # Clear any existing handlers
         
-        # Check if handler already exists to avoid duplicates
-        if not self.logger.handlers:
-            handler = logging.StreamHandler()
-            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
+        # Console handler
+        if self.enable_console:
+            console_handler = logging.StreamHandler()
+            console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(console_formatter)
+            self.logger.addHandler(console_handler)
         
-        print(f"Set up basic console logging for {service_name}")
+        # File handler
+        try:
+            log_dir = "logs"
+            os.makedirs(log_dir, exist_ok=True)
+            
+            # Regular log file
+            file_handler = logging.FileHandler(os.path.join(log_dir, f"{self.service_name}.log"))
+            file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(file_formatter)
+            self.logger.addHandler(file_handler)
+            
+            # JSON log file
+            self.json_log_file = os.path.join(log_dir, f"{self.service_name}.jsonl")
+            
+            print(f"📝 Logs will be saved to {os.path.join(log_dir, self.service_name)}.log and .jsonl")
+        except Exception as e:
+            print(f"⚠️ Error setting up file logging: {e}")
+            self.json_log_file = None
+    
+    def _log_to_file(self, event_type: str, data: Dict[str, Any]) -> None:
+        """Log an event to the JSON log file."""
+        if not self.json_log_file:
+            return
+            
+        try:
+            log_entry = {
+                "timestamp": time.time(),
+                "event": event_type,
+                "service": self.service_name,
+                "environment": self.environment,
+                "conversation_id": self.conversation_id,
+                **data
+            }
+            
+            with open(self.json_log_file, 'a') as f:
+                f.write(json.dumps(log_entry) + '\n')
+        except Exception as e:
+            print(f"⚠️ Error writing to JSON log file: {e}")
+    
+    def _send_http_log(self, event_type: str, data: Dict[str, Any]) -> bool:
+        """Send a log directly to LogFire via HTTP API."""
+        if not self.api_key:
+            return False
+            
+        try:
+            import urllib.request
+            import urllib.error
+            
+            # Prepare log data
+            log_data = {
+                "timestamp": time.time() * 1000,  # LogFire expects milliseconds
+                "event": event_type,
+                "service": self.service_name,
+                "environment": self.environment,
+                "level": "info",
+                **data
+            }
+            
+            if self.conversation_id:
+                log_data["conversation_id"] = self.conversation_id
+            
+            # Convert any non-serializable values to strings
+            for key, value in log_data.items():
+                if isinstance(value, (dict, list, tuple)):
+                    try:
+                        json.dumps(value)  # Test if serializable
+                    except (TypeError, OverflowError):
+                        log_data[key] = str(value)
+            
+            # Determine endpoint URL
+            endpoint = "https://api.logfire.dev/api/v1/log"
+            if self.project_id:
+                endpoint = f"https://api.logfire.dev/api/v1/projects/{self.project_id}/log"
+            
+            # Create and send request
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+            
+            req = urllib.request.Request(
+                endpoint,
+                data=json.dumps(log_data).encode('utf-8'),
+                headers=headers,
+                method="POST"
+            )
+            
+            with urllib.request.urlopen(req, timeout=5) as response:
+                return response.status == 200 or response.status == 201
+                
+        except Exception as e:
+            print(f"⚠️ HTTP log error for event '{event_type}': {e}")
+            return False
+    
+    def _log_to_logfire_sdk(self, event_type: str, data: Dict[str, Any]) -> bool:
+        """Log an event using the LogFire SDK."""
+        if not HAS_LOGFIRE or not self.logfire_sdk_working:
+            return False
+            
+        try:
+            # Clone data to avoid modifying the original
+            log_data = data.copy()
+            
+            # Add conversation_id if available
+            if self.conversation_id and "conversation_id" not in log_data:
+                log_data["conversation_id"] = self.conversation_id
+            
+            # Log the event
+            logfire.info(event_type, **log_data)
+            return True
+        except Exception as e:
+            print(f"⚠️ LogFire SDK error for event '{event_type}': {e}")
+            self.logfire_sdk_working = False  # Mark as not working for future logs
+            return False
+    
+    def _log_event(self, event_type: str, data: Dict[str, Any], log_message: Optional[str] = None) -> None:
+        """Log an event through all available channels."""
+        # Log to console/file logger
+        if log_message:
+            self.logger.info(log_message)
+        
+        # Log to JSON file
+        self._log_to_file(event_type, data)
+        
+        # Try LogFire SDK first
+        sdk_success = self._log_to_logfire_sdk(event_type, data)
+        
+        # Fall back to HTTP if SDK fails
+        if not sdk_success and self.api_key:
+            http_success = self._send_http_log(event_type, data)
+            if not http_success:
+                print(f"⚠️ Failed to send '{event_type}' log to LogFire")
     
     def start_conversation(self, user_id: Optional[str] = None) -> str:
-        """
-        Start a new conversation and return the conversation ID.
-        
-        Args:
-            user_id: Optional identifier for the user
-            
-        Returns:
-            Conversation ID
-        """
+        """Start a new conversation and return the conversation ID."""
         self.conversation_id = str(uuid.uuid4())
         self.start_time = time.time()
-        self.conversation_context = {
-            "conversation_id": self.conversation_id,
-            "user_id": user_id or "anonymous",
-            "start_time": self.start_time,
-            "messages": []
+        self.messages = []
+        
+        # Prepare event data
+        event_data = {
+            "user_id": user_id or "anonymous"
         }
         
-        # Log conversation start
-        if HAS_LOGFIRE:
-            try:
-                logfire.info(
-                    "conversation_started",
-                    conversation_id=self.conversation_id,
-                    user_id=self.conversation_context["user_id"]
-                )
-            except Exception as e:
-                self.logger.info(f"Conversation started: {self.conversation_id} (User: {self.conversation_context['user_id']})")
-                self.logger.error(f"Error logging to LogFire: {e}")
-        else:
-            self.logger.info(f"Conversation started: {self.conversation_id} (User: {self.conversation_context['user_id']})")
+        # Log the event
+        self._log_event(
+            "conversation_started", 
+            event_data,
+            f"Conversation started: {self.conversation_id}"
+        )
         
         return self.conversation_id
     
     def log_user_message(self, message: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Log a user message in the current conversation.
-        
-        Args:
-            message: User message
-            metadata: Optional metadata
-        """
+        """Log a user message."""
         if not self.conversation_id:
             self.start_conversation()
-            
-        # Add message to conversation context
+        
+        # Store message
         msg_data = {
             "role": "user",
             "content": message,
@@ -250,39 +268,30 @@ class LogFireProvider:
         }
         if metadata:
             msg_data["metadata"] = metadata
-            
-        self.conversation_context["messages"].append(msg_data)
+        self.messages.append(msg_data)
         
-        # Log with LogFire if available
-        if HAS_LOGFIRE:
-            try:
-                # Some environments might require suppressing logfire warnings
-                os.environ.setdefault("LOGFIRE_IGNORE_NO_CONFIG", "1")
-                
-                logfire.info(
-                    "user_message",
-                    conversation_id=self.conversation_id,
-                    message=message,
-                    **({} if not metadata else {"metadata": json.dumps(metadata)})
-                )
-            except Exception as e:
-                self.logger.info(f"User message: {message[:100]}...")
-                self.logger.error(f"Error logging to LogFire: {e}")
-        else:
-            self.logger.info(f"User message: {message[:100]}...")
+        # Prepare event data
+        event_data = {
+            "message": message
+        }
+        if metadata:
+            # Flatten metadata for easier querying
+            for key, value in metadata.items():
+                event_data[f"metadata_{key}"] = str(value) if isinstance(value, (dict, list, tuple)) else value
+        
+        # Log the event
+        self._log_event(
+            "user_message", 
+            event_data,
+            f"User: {message[:100]}..." if len(message) > 100 else f"User: {message}"
+        )
     
     def log_agent_message(self, message: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Log an agent message in the current conversation.
-        
-        Args:
-            message: Agent message
-            metadata: Optional metadata
-        """
+        """Log an agent message."""
         if not self.conversation_id:
             self.start_conversation()
-            
-        # Add message to conversation context
+        
+        # Store message
         msg_data = {
             "role": "agent",
             "content": message,
@@ -290,241 +299,103 @@ class LogFireProvider:
         }
         if metadata:
             msg_data["metadata"] = metadata
-            
-        self.conversation_context["messages"].append(msg_data)
+        self.messages.append(msg_data)
         
-        # Log with LogFire if available
-        if HAS_LOGFIRE:
-            try:
-                # Some environments might require suppressing logfire warnings
-                os.environ.setdefault("LOGFIRE_IGNORE_NO_CONFIG", "1")
-                
-                logfire.info(
-                    "agent_message",
-                    conversation_id=self.conversation_id,
-                    message=message[:200] + ("..." if len(message) > 200 else ""),
-                    **({} if not metadata else {"metadata": json.dumps(metadata)})
-                )
-            except Exception as e:
-                self.logger.info(f"Agent message: {message[:100]}...")
-                self.logger.error(f"Error logging to LogFire: {e}")
-        else:
-            self.logger.info(f"Agent message: {message[:100]}...")
-    
-    def log_function_call(
-        self, 
-        function_name: str, 
-        arguments: Dict[str, Any],
-        result: Any = None,
-        error: Optional[str] = None
-    ) -> None:
-        """
-        Log a function call by the agent.
+        # Prepare event data
+        event_data = {
+            "message": message[:500] + ("..." if len(message) > 500 else "")
+        }
+        if metadata:
+            # Flatten metadata for easier querying
+            for key, value in metadata.items():
+                event_data[f"metadata_{key}"] = str(value) if isinstance(value, (dict, list, tuple)) else value
         
-        Args:
-            function_name: Name of the function called
-            arguments: Arguments passed to the function
-            result: Optional result of the function call
-            error: Optional error message if the function failed
-        """
-        # Calculate duration
-        duration = None
-        if self.start_time:
-            duration = time.time() - self.start_time
-        
-        # Log with LogFire if available
-        if HAS_LOGFIRE:
-            try:
-                # Some environments might require suppressing logfire warnings
-                os.environ.setdefault("LOGFIRE_IGNORE_NO_CONFIG", "1")
-                
-                logfire.info(
-                    "function_call",
-                    conversation_id=self.conversation_id or "unknown",
-                    function_name=function_name,
-                    arguments=json.dumps(arguments) if arguments else None,
-                    result=json.dumps(result) if result is not None else None,
-                    error=error,
-                    duration=duration
-                )
-            except Exception as e:
-                self.logger.info(f"Function call: {function_name}")
-                self.logger.error(f"Error logging to LogFire: {e}")
-        else:
-            self.logger.info(f"Function call: {function_name}")
-            if error:
-                self.logger.error(f"Function error: {error}")
+        # Log the event
+        self._log_event(
+            "agent_message", 
+            event_data,
+            f"Agent: {message[:100]}..." if len(message) > 100 else f"Agent: {message}"
+        )
     
     def log_error(self, error: Union[str, Exception], context: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Log an error encountered by the agent.
-        
-        Args:
-            error: Error message or exception
-            context: Optional context information
-        """
+        """Log an error."""
         error_msg = str(error)
         error_type = type(error).__name__ if isinstance(error, Exception) else "Error"
+        stack_trace = traceback.format_exc() if isinstance(error, Exception) else None
         
-        # Log with LogFire if available
-        if HAS_LOGFIRE:
-            try:
-                # Some environments might require suppressing logfire warnings
-                os.environ.setdefault("LOGFIRE_IGNORE_NO_CONFIG", "1")
-                
-                logfire.error(
-                    "agent_error",
-                    conversation_id=self.conversation_id or "unknown",
-                    error_message=error_msg,
-                    error_type=error_type,
-                    **({} if not context else {"context": json.dumps(context)})
-                )
-            except Exception as e:
-                self.logger.error(f"Agent error: {error_msg}")
-                self.logger.error(f"Error logging to LogFire: {e}")
-        else:
-            self.logger.error(f"Agent error: {error_msg}")
-            if context:
-                self.logger.debug(f"Error context: {json.dumps(context)}")
+        # Prepare event data
+        event_data = {
+            "error_message": error_msg,
+            "error_type": error_type
+        }
+        
+        if stack_trace:
+            event_data["stack_trace"] = stack_trace
+            
+        if context:
+            # Flatten context for easier querying
+            for key, value in context.items():
+                event_data[f"context_{key}"] = str(value) if isinstance(value, (dict, list, tuple)) else value
+        
+        # Log the event
+        self._log_event(
+            "error", 
+            event_data,
+            f"Error: {error_msg}"
+        )
+    
+    def log_system_message(self, message: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Log a system message."""
+        # Prepare event data
+        event_data = {
+            "message": message
+        }
+        if metadata:
+            # Flatten metadata for easier querying
+            for key, value in metadata.items():
+                event_data[f"metadata_{key}"] = str(value) if isinstance(value, (dict, list, tuple)) else value
+        
+        # Log the event
+        self._log_event(
+            "system_message", 
+            event_data,
+            f"System: {message}"
+        )
     
     def end_conversation(self, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """
-        End the current conversation and log summary.
-        
-        Args:
-            metadata: Optional metadata about the conversation
-        """
+        """End the current conversation and log summary."""
         if not self.conversation_id:
             return
-            
-        # Calculate conversation duration
-        duration = None
-        if self.start_time:
-            duration = time.time() - self.start_time
-            
-        # Count messages by role
-        user_messages = sum(1 for msg in self.conversation_context["messages"] if msg["role"] == "user")
-        agent_messages = sum(1 for msg in self.conversation_context["messages"] if msg["role"] == "agent")
         
-        # Log with LogFire if available
-        if HAS_LOGFIRE:
-            try:
-                # Some environments might require suppressing logfire warnings
-                os.environ.setdefault("LOGFIRE_IGNORE_NO_CONFIG", "1")
-                
-                logfire.info(
-                    "conversation_ended",
-                    conversation_id=self.conversation_id,
-                    user_id=self.conversation_context.get("user_id", "anonymous"),
-                    duration=duration,
-                    user_message_count=user_messages,
-                    agent_message_count=agent_messages,
-                    **({} if not metadata else metadata)
-                )
-            except Exception as e:
-                self.logger.info(f"Conversation ended: {self.conversation_id} (Duration: {duration:.2f}s)")
-                self.logger.error(f"Error logging to LogFire: {e}")
-        else:
-            self.logger.info(f"Conversation ended: {self.conversation_id} (Duration: {duration:.2f}s)")
+        # Calculate metrics
+        duration = time.time() - self.start_time if self.start_time else 0
+        user_messages = sum(1 for msg in self.messages if msg["role"] == "user")
+        agent_messages = sum(1 for msg in self.messages if msg["role"] == "agent")
         
-        # Reset conversation context
+        # Prepare event data
+        event_data = {
+            "duration_seconds": duration,
+            "user_message_count": user_messages,
+            "agent_message_count": agent_messages,
+            "total_message_count": len(self.messages)
+        }
+        
+        if metadata:
+            # Flatten metadata for easier querying
+            for key, value in metadata.items():
+                event_data[f"metadata_{key}"] = str(value) if isinstance(value, (dict, list, tuple)) else value
+        
+        # Log the event
+        self._log_event(
+            "conversation_ended", 
+            event_data,
+            f"Conversation ended: {self.conversation_id} (Duration: {duration:.2f}s)"
+        )
+        
+        # Reset conversation state
         self.conversation_id = None
-        self.conversation_context = {}
         self.start_time = None
+        self.messages = []
     
-    def create_trace(
-        self, 
-        operation_name: str,
-        context: Optional[Dict[str, Any]] = None
-    ) -> Callable:
-        """
-        Create a trace for an operation using the with statement.
-        
-        Args:
-            operation_name: Name of the operation
-            context: Optional context information
-            
-        Returns:
-            Context manager for the trace
-        """
-        # Create a context manager for tracing
-        class TraceContextManager:
-            def __init__(self, provider, name, ctx):
-                self.provider = provider
-                self.name = name
-                self.context = ctx or {}
-                self.start_time = None
-                self.span = None
-            
-            def __enter__(self):
-                self.start_time = time.time()
-                # Start the span if LogFire is available
-                if HAS_LOGFIRE:
-                    try:
-                        # Some environments might require suppressing logfire warnings
-                        os.environ.setdefault("LOGFIRE_IGNORE_NO_CONFIG", "1")
-                        
-                        if hasattr(logfire, 'start_span'):
-                            self.span = logfire.start_span(
-                                name=self.name,
-                                attributes={
-                                    "conversation_id": self.provider.conversation_id or "unknown",
-                                    **self.context
-                                }
-                            )
-                    except Exception as e:
-                        self.provider.logger.error(f"Error starting LogFire span: {e}")
-                
-                self.provider.logger.info(f"Operation started: {self.name}")
-                return self
-                
-            def __exit__(self, exc_type, exc_val, exc_tb):
-                duration = time.time() - self.start_time
-                
-                # Log exception if any
-                if exc_type is not None:
-                    if HAS_LOGFIRE:
-                        try:
-                            # Some environments might require suppressing logfire warnings
-                            os.environ.setdefault("LOGFIRE_IGNORE_NO_CONFIG", "1")
-                            
-                            logfire.exception(
-                                f"{self.name}_error",
-                                error=str(exc_val),
-                                error_type=exc_type.__name__,
-                                duration=duration
-                            )
-                        except Exception as e:
-                            self.provider.logger.error(f"Operation error: {exc_val}")
-                            self.provider.logger.error(f"Error logging to LogFire: {e}")
-                    else:
-                        self.provider.logger.error(f"Operation error: {exc_val}")
-                
-                # End the span
-                if self.span and hasattr(self.span, 'end'):
-                    try:
-                        self.span.end()
-                    except Exception as e:
-                        self.provider.logger.error(f"Error ending LogFire span: {e}")
-                
-                # Log completion
-                if HAS_LOGFIRE:
-                    try:
-                        # Some environments might require suppressing logfire warnings
-                        os.environ.setdefault("LOGFIRE_IGNORE_NO_CONFIG", "1")
-                        
-                        logfire.info(
-                            f"{self.name}_completed",
-                            duration=duration,
-                            conversation_id=self.provider.conversation_id or "unknown",
-                            success=(exc_type is None)
-                        )
-                    except Exception as e:
-                        self.provider.logger.info(f"Operation completed: {self.name} (Duration: {duration:.2f}s)")
-                        self.provider.logger.error(f"Error logging to LogFire: {e}")
-                else:
-                    self.provider.logger.info(f"Operation completed: {self.name} (Duration: {duration:.2f}s)")
-                
-                return False  # Don't suppress exceptions
-        
-        return TraceContextManager(self, operation_name, context)
+    # Aliases for backward compatibility
+    log_agent_response = log_agent_message
