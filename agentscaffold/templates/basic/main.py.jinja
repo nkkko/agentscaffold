@@ -54,11 +54,12 @@ async def process_single_message(agent, message: str) -> Dict[str, Any]:
         print(f"❌ Error processing message: {e}")
         return {"response": f"Error: {str(e)}", "metadata": {"error": True}}
 
-async def run_interactive(agent):
+async def run_interactive(agent, silent: bool = False):
     """Interactive session with Daytona."""
-    print(f"\n🚀 {agent.name} - {agent.description}")
-    print("🔒 Running in Daytona cloud environment")
-    print("Type 'quit' or 'exit' to end session\n")
+    if not silent:
+        print(f"\n🚀 {agent.name} - {agent.description}")
+        print("🔒 Running in Daytona cloud environment")
+        print("Type 'quit' or 'exit' to end session\n")
     
     while True:
         try:
@@ -67,12 +68,20 @@ async def run_interactive(agent):
                 continue
                 
             if message.lower() in ["quit", "exit", "bye"]:
-                print("\n👋 Ending session...")
+                if not silent:
+                    print("\n👋 Ending session...")
                 break
                 
-            print("⚡ Processing...")
+            if not silent:
+                print("⚡ Processing...")
+            else:
+                print("⚡", end="", flush=True)
+                
             result = await process_single_message(agent, message)
             
+            if silent:
+                print("\r  ", end="", flush=True)  # Clear the processing indicator
+                
             print(f"\nAgent: {result.get('response')}")
             
             # Display any search results if available
@@ -87,7 +96,8 @@ async def run_interactive(agent):
                 print(result.get("memory_context"))
                 
         except KeyboardInterrupt:
-            print("\n👋 Ending session...")
+            if not silent:
+                print("\n👋 Ending session...")
             break
         except Exception as e:
             print(f"\n❌ Error: {e}")
@@ -105,6 +115,7 @@ async def main(input_data: Optional[Dict[str, Any]] = None):
     parser = argparse.ArgumentParser(description="Run the {{agent_name}} agent")
     parser.add_argument("--message", "-m", help="Message to process")
     parser.add_argument("--interactive", "-i", action="store_true", help="Run in interactive mode")
+    parser.add_argument("--silent", action="store_true", help="Run with minimal console output")
     
     {% if search_provider != "none" %}
     parser.add_argument("--search", "-s", help="Search query to use")
@@ -117,10 +128,16 @@ async def main(input_data: Optional[Dict[str, Any]] = None):
     {% endif %}
     
     args = parser.parse_args()
+    silent_mode = args.silent if hasattr(args, 'silent') else False
     
     try:
-        print("🔧 Initializing Daytona agent...")
+        if not silent_mode:
+            print("🔧 Initializing Daytona agent...")
         agent = Agent()
+        
+        # Set silent mode if specified
+        if silent_mode and hasattr(agent, 'set_silent_mode'):
+            agent.set_silent_mode(True)
         
         # If input_data is provided, use it directly
         if input_data:
@@ -145,15 +162,24 @@ async def main(input_data: Optional[Dict[str, Any]] = None):
                 input_data["store_in_memory"] = True
             {% endif %}
             
+            if silent_mode:
+                print("⚡", end="", flush=True)
+                
             result = await agent.run(input_data)
+            
+            if silent_mode:
+                print("\r  ", end="", flush=True)  # Clear the indicator
+                
             print(f"\nAgent: {result.get('response')}")
             return result
         else:
             # Run in interactive mode
-            await run_interactive(agent)
+            await run_interactive(agent, silent=silent_mode)
             return {"response": "Interactive session completed", "metadata": {"interactive": True}}
             
     except Exception as e:
+        if silent_mode:
+            print("\r❌", end="", flush=True)
         print(f"❌ Error: {e}")
         return {"response": f"Error: {str(e)}", "metadata": {"error": True}}
 

@@ -103,6 +103,7 @@ def new(
     utilities: Annotated[Optional[List[str]], typer.Option(help="Utility packages to include, comma-separated")] = ["dotenv"],
     list_providers: Annotated[bool, typer.Option("--list-providers", "-l", help="List available providers and exit")] = False,
     api_key: Annotated[Optional[str], typer.Option(help="API key for the selected LLM provider")] = None,
+    
 ):
     """
     Create a new agent with the specified name and template.
@@ -297,6 +298,8 @@ def run(
     search: Annotated[Optional[str], typer.Option("--search", "-s", help="Search query")] = None,
     context: Annotated[bool, typer.Option("--context", "-c", help="Retrieve context from memory")] = False,
     context_query: Annotated[Optional[str], typer.Option(help="Query for context retrieval")] = None,
+    silent: Annotated[bool, typer.Option("--silent", help="Run with minimal console output")] = False,
+
 ):
     """
     Run an agent in the specified directory.
@@ -374,6 +377,9 @@ def run(
     
     if interactive:
         cmd.append("--interactive")
+    
+    if silent:
+        cmd.append("--silent")
     
     if message:
         cmd.extend(["--message", message])

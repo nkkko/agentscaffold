@@ -37,6 +37,7 @@ class DaytonaRuntime:
         self._agent_dir = None
         self._conversation_id = None
         self._api_keys = {}
+        self.silent_mode = False
         
         # Load environment variables first
         self._load_env_vars()
@@ -55,6 +56,15 @@ class DaytonaRuntime:
         
         # Initialize Daytona SDK
         self._load_daytona_sdk()
+        
+    def set_silent_mode(self, silent: bool = True):
+        """Set the runtime to silent mode."""
+        self.silent_mode = silent
+
+    def _print(self, message: str, end="\n", flush=False):
+        """Print only if not in silent mode."""
+        if not self.silent_mode:
+            print(message, end=end, flush=flush)
     
     def _load_env_vars(self):
         """Load environment variables from .env file."""
@@ -509,29 +519,192 @@ try:
         print(json.dumps(response))
         sys.exit(0)
     
-    # For regular messages, provide a response with conversation context
+    
+    # For regular messages, use OpenAI to generate a response
     else:
         # Get recent context
-        context = get_context("")  # Empty query gets most recent items
+        memory_context = get_context("")  # Empty query gets most recent items
         
-        if context:
-            response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask about our previous conversation.\\n\\nBased on our conversation history:\\n{{context}}"
-        else:
-            response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask me to remember our conversation later."
+        # Prepare to use OpenAI for response generation
+        try:
+            import openai
+            
+            # Initialize OpenAI client
+            openai.api_key = os.environ.get("OPENAI_API_KEY")
+            if not openai.api_key:
+                raise ValueError("OpenAI API key not found")
+                
+            # Prepare the conversation context for the API - using Python string literals instead of f-strings
+            system_prompt = "You are a helpful AI assistant running in a Daytona environment with search and memory capabilities. Respond naturally to the user's queries based on the conversation history and context provided."
+            messages = [
+                {{"role": "system", "content": system_prompt}}
+            ]
+            
+            # Add conversation history if available
+            if memory_context:
+                context_prompt = "Recent conversation history: " + memory_context
+                messages.append({{"role": "system", "content": context_prompt}})
+            
+            # Add the user's current message
+            messages.append({{"role": "user", "content": message}})
+            
+            # Call the OpenAI API
+            print("Calling OpenAI API for response generation...")
+            
+            try:
+                # Try new client first
+                from openai import OpenAI
+                client = OpenAI(api_key=openai.api_key)
+                response_obj = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=800
+                )
+                response_text = response_obj.choices[0].message.content
+                print("Used new OpenAI client")
+            except (ImportError, AttributeError):
+                # Fall back to old client
+                response_obj = openai.ChatCompletion.create(
+                    model="gpt-4o",
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=800
+                )
+                response_text = response_obj.choices[0].message.content
+                print("Used legacy OpenAI client")
+            
+            # Store this interaction in memory
+            memory_entry = f"User: {{message}}\\nAgent: {{response_text}}"
+            add_to_memory(memory_entry, {{"type": "conversation"}})
+            
+            # Log the OpenAI response
+            log_event("openai_response", {{"message": message, "response": response_text[:200]}})
+            
+            response = {{
+                "response": response_text,
+                "metadata": {{"conversation_id": CONVERSATION_ID, "used_openai": True}}
+            }}
+            
+            print(json.dumps(response))
+            
+        except ImportError as ie:
+            print(f"OpenAI module not available: {{ie}}, trying HTTP implementation...")
+            try:
+                # Alternative using direct HTTP request
+                import urllib.request
+                import urllib.parse
+                
+                url = "https://api.openai.com/v1/chat/completions"
+                api_key = os.environ.get('OPENAI_API_KEY')
+                
+                if not api_key:
+                    raise ValueError("OpenAI API key not found")
+                
+                headers = {{
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {{api_key}}"
+                }}
+                
+                # Prepare messages
+                system_content = "You are a helpful AI assistant running in a Daytona environment with search and memory capabilities."
+                messages = [
+                    {{"role": "system", "content": system_content}}
+                ]
+                
+                # Add context if available
+                if memory_context:
+                    context_content = "Recent conversation history: " + memory_context
+                    messages.append({{"role": "system", "content": context_content}})
+                
+                # Add user message
+                messages.append({{"role": "user", "content": message}})
+                
+                # Prepare the request payload
+                payload = {{
+                    "model": "gpt-4o",
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 800
+                }}
+                
+                encoded_data = json.dumps(payload).encode('utf-8')
+                
+                req = urllib.request.Request(
+                    url,
+                    data=encoded_data,
+                    headers=headers,
+                    method="POST"
+                )
+                
+                with urllib.request.urlopen(req, timeout=15) as response_stream:
+                    api_response = json.loads(response_stream.read().decode('utf-8'))
+                    response_text = api_response["choices"][0]["message"]["content"]
+                    print("Used HTTP request to OpenAI API")
+                    
+                    # Store this interaction in memory
+                    memory_entry = f"User: {{message}}\\nAgent: {{response_text}}"
+                    add_to_memory(memory_entry, {{"type": "conversation"}})
+                    
+                    # Log the OpenAI response
+                    log_event("openai_response", {{"message": message, "response": response_text[:200]}})
+                    
+                    response = {{
+                        "response": response_text,
+                        "metadata": {{"conversation_id": CONVERSATION_ID, "used_openai": True}}
+                    }}
+                    
+                    print(json.dumps(response))
+                    
+            except Exception as api_error:
+                print(f"Error calling OpenAI API via HTTP: {{api_error}}")
+                
+                # Fall back to templated response
+                if memory_context:
+                    response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask about our previous conversation.\\n\\nBased on our conversation history:\\n{{memory_context}}"
+                else:
+                    response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask me to remember our conversation later."
+                
+                # Store this interaction
+                memory_entry = f"User: {{message}}\\nAgent: {{response_text}}"
+                add_to_memory(memory_entry, {{"type": "conversation"}})
+                
+                # Log the regular message
+                log_event("regular_message", {{"message": message}})
+                log_event("agent_response", {{"response": response_text[:200], "type": "regular", "fallback": True}})
+                
+                response = {{
+                    "response": response_text,
+                    "metadata": {{"conversation_id": CONVERSATION_ID, "fallback": True}}
+                }}
+                
+                print(json.dumps(response))
         
-        # Store this interaction
-        add_to_memory(f"User: {{message}}\\nAgent: {{response_text}}", {{"type": "conversation"}})
-        
-        # Log the regular message
-        log_event("regular_message", {{"message": message}})
-        log_event("agent_response", {{"response": response_text, "type": "regular"}})
-        
-        response = {{
-            "response": response_text,
-            "metadata": {{"conversation_id": CONVERSATION_ID}}
-        }}
-        
-        print(json.dumps(response))
+        except Exception as e:
+            print(f"General error in OpenAI processing: {{e}}")
+            traceback.print_exc()
+            
+            # Fall back to templated response
+            if memory_context:
+                response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask about our previous conversation.\\n\\nBased on our conversation history:\\n{{memory_context}}"
+            else:
+                response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask me to remember our conversation later."
+            
+            # Store this interaction
+            memory_entry = f"User: {{message}}\\nAgent: {{response_text}}"
+            add_to_memory(memory_entry, {{"type": "conversation"}})
+            
+            # Log the error and fallback response
+            log_event("error", {{"error": str(e), "traceback": traceback.format_exc()}})
+            log_event("agent_response", {{"response": response_text[:200], "type": "regular", "fallback": True}})
+            
+            response = {{
+                "response": response_text,
+                "metadata": {{"conversation_id": CONVERSATION_ID, "fallback": True}}
+            }}
+            
+            print(json.dumps(response))
+    
     
 except Exception as e:
     # Ultimate fallback
@@ -728,6 +901,7 @@ class Agent(BaseModel):
         super().__init__(**data)
         print("🔒 Initializing with mandatory Daytona execution")
         self._runtime = DaytonaRuntime()
+        self.silent_mode = False
 
 
         # Handle missing name field by providing a default
@@ -846,6 +1020,12 @@ class Agent(BaseModel):
         if hasattr(self, '_init_logging'):
             self.logging_provider = self._init_logging()
 
+    def set_silent_mode(self, silent: bool = True):
+        """Set the agent to silent mode."""
+        self.silent_mode = silent
+        # If the agent has a daytona runtime, set its silent mode too
+        if hasattr(self, 'runtime') and hasattr(self.runtime, 'set_silent_mode'):
+            self.runtime.set_silent_mode(silent)
     @property
     def runtime(self):
         """Get the DaytonaRuntime instance."""
