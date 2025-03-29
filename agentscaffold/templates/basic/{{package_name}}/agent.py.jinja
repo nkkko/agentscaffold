@@ -680,19 +680,37 @@ class Agent(BaseAgent):
         print(f"✅ Agent initialized: {self.name}")
     
     def _init_mcp_clients(self):
-        """Initialize MCP clients from configuration."""
+        """Initialize MCP clients from configuration across all scopes."""
         try:
             # Import MCP-related modules
             from agentscaffold.providers.mcp import load_mcp_servers
             from agentscaffold.providers.mcp.client import MCPClient
             
-            # Load MCP server configurations
-            mcp_servers = load_mcp_servers()
-            if not mcp_servers:
+            # Load MCP server configurations from multiple scopes
+            # Order matters: project > user > local (project overrides user, etc.)
+            # Current directory (local scope)
+            local_servers = load_mcp_servers()
+            
+            # User-level scope
+            import os
+            user_servers = load_mcp_servers(os.path.expanduser("~"))
+            
+            # Project scope (look for project root)
+            project_root = "."  # Default to current directory
+            project_servers = load_mcp_servers(project_root)
+            
+            # Merge servers, with project taking precedence over user, and user over local
+            all_servers = {}
+            all_servers.update(local_servers)
+            all_servers.update(user_servers)
+            all_servers.update(project_servers)
+            
+            if not all_servers:
+                print("No MCP servers configured. Use 'agentscaffold mcp add' to add servers.")
                 return
             
             # Initialize clients for each server
-            for name, server_config in mcp_servers.items():
+            for name, server_config in all_servers.items():
                 try:
                     # Pass the server name to the client constructor
                     self.mcp_clients[name] = MCPClient(server_config, name=name)
