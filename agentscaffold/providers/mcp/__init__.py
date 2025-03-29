@@ -8,20 +8,32 @@ from typing import Dict, Any, List, Optional
 # MCP configuration is per-agent, stored in the agent's directory
 MCP_CONFIG_FILE = ".mcp.json"
 
-def load_mcp_servers(agent_dir: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+def get_config_path(location: Optional[str] = None) -> str:
     """
-    Load MCP servers configuration from the specified agent directory.
+    Get the path to the MCP configuration file.
     
     Args:
-        agent_dir: Directory containing the agent (default: current directory)
+        location: Directory to check (default: current directory)
+        
+    Returns:
+        Absolute path to the configuration file
+    """
+    if location is None:
+        location = os.getcwd()
+        
+    return os.path.join(os.path.abspath(location), MCP_CONFIG_FILE)
+
+def load_mcp_servers(location: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+    """
+    Load MCP servers configuration from the specified location.
+    
+    Args:
+        location: Directory containing the configuration (default: current directory)
         
     Returns:
         Dictionary of server configurations
     """
-    if agent_dir is None:
-        agent_dir = os.getcwd()
-        
-    config_path = os.path.join(agent_dir, MCP_CONFIG_FILE)
+    config_path = get_config_path(location)
     
     if not os.path.exists(config_path):
         return {}
@@ -30,21 +42,21 @@ def load_mcp_servers(agent_dir: Optional[str] = None) -> Dict[str, Dict[str, Any
         with open(config_path, 'r') as f:
             config = json.load(f)
             return config.get("mcpServers", {})
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, IOError):
         return {}
 
-def save_mcp_servers(servers: Dict[str, Dict[str, Any]], agent_dir: Optional[str] = None) -> None:
+def save_mcp_servers(servers: Dict[str, Dict[str, Any]], location: Optional[str] = None) -> None:
     """
-    Save MCP servers configuration to the specified agent directory.
+    Save MCP servers configuration to the specified location.
     
     Args:
         servers: Dictionary of server configurations
-        agent_dir: Directory containing the agent (default: current directory)
+        location: Directory to save to (default: current directory)
     """
-    if agent_dir is None:
-        agent_dir = os.getcwd()
-        
-    config_path = os.path.join(agent_dir, MCP_CONFIG_FILE)
+    config_path = get_config_path(location)
+    
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(config_path), exist_ok=True)
     
     # Check if file exists to preserve any other settings
     config = {"mcpServers": servers}
@@ -56,7 +68,7 @@ def save_mcp_servers(servers: Dict[str, Dict[str, Any]], agent_dir: Optional[str
                 for key, value in existing_config.items():
                     if key != "mcpServers":
                         config[key] = value
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, IOError):
             pass
     
     with open(config_path, 'w') as f:
