@@ -435,13 +435,12 @@ def providers():
     show_provider_options()
 
 
-@app.group()
-def mcp():
-    """Configure and manage MCP (Model Context Protocol) servers."""
-    pass
+# Create a subcommand group for MCP
+mcp_app = typer.Typer(help="Configure and manage MCP (Model Context Protocol) servers.")
+app.add_typer(mcp_app, name="mcp")
 
 
-@mcp.command("add")
+@mcp_app.command("add")
 def mcp_add(
     name: Annotated[Optional[str], typer.Argument(help="Name for the MCP server")] = None,
     command: Annotated[Optional[str], typer.Argument(help="Command to run the MCP server")] = None,
@@ -556,7 +555,7 @@ def mcp_add(
     typer.echo(f"Added stdio MCP server {typer.style(name, fg=typer.colors.CYAN)} with command: {main_command} {' '.join(cmd_args)} {' to project config' if scope == 'project' else ''}")
 
 
-@mcp.command("add-http")
+@mcp_app.command("add-http")
 def mcp_add_http(
     name: Annotated[str, typer.Argument(help="Name for the MCP server")],
     url: Annotated[str, typer.Argument(help="URL of the MCP server")],
@@ -621,7 +620,7 @@ def mcp_add_http(
         typer.echo("   Install with: pip install httpx")
 
 
-@mcp.command("list")
+@mcp_app.command("list")
 def mcp_list(
     scope: Annotated[str, typer.Option("-s", "--scope", help="Configuration scope (local, user, project, all)")] = "all",
 ):
@@ -697,7 +696,7 @@ def mcp_list(
             typer.echo("")
 
 
-@mcp.command("remove")
+@mcp_app.command("remove")
 def mcp_remove(
     name: Annotated[str, typer.Argument(help="Name of the MCP server to remove")],
     scope: Annotated[str, typer.Option("-s", "--scope", help="Configuration scope (local, user, or project)")] = "project",
@@ -729,7 +728,7 @@ def mcp_remove(
         typer.echo(f"Removed MCP server '{name}' from {scope} configuration")
 
 
-@mcp.command("get")
+@mcp_app.command("get")
 def mcp_get(
     name: Annotated[str, typer.Argument(help="Name of the MCP server to show details for")],
     scope: Annotated[str, typer.Option("-s", "--scope", help="Configuration scope (local, user, project, all)")] = "all",
@@ -805,7 +804,7 @@ def mcp_get(
                 typer.echo(f"  {key}={masked}")
 
 
-@mcp.command("test")
+@mcp_app.command("test")
 def mcp_test(
     name: Annotated[str, typer.Argument(help="Name of the MCP server to test")],
     scope: Annotated[str, typer.Option("-s", "--scope", help="Configuration scope (local, user, project, all)")] = "all",
