@@ -132,6 +132,10 @@ UTILITY_PACKAGES = {
     "fastapi": {
         "package": "fastapi>=0.100.0 uvicorn>=0.20.0",
         "description": "FastAPI web framework for building APIs"
+    },
+    "httpx": {
+        "package": "httpx>=0.24.1",
+        "description": "HTTP client required for MCP integration"
     }
 }
 

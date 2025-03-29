@@ -435,5 +435,190 @@ def providers():
     show_provider_options()
 
 
+@app.group()
+def mcp():
+    """Manage MCP (Model Context Protocol) servers for agent integration."""
+    pass
+
+
+@mcp.command("add")
+def mcp_add(
+    name: Annotated[str, typer.Argument(help="Unique name for the MCP server")],
+    url: Annotated[str, typer.Argument(help="URL of the MCP server")],
+    api_key: Annotated[Optional[str], typer.Option(help="API key for the MCP server")] = None,
+    auth_type: Annotated[str, typer.Option(help="Authentication type (api_key, oauth, none)")] = "api_key",
+    capability: Annotated[List[str], typer.Option("--capability", "-c", help="Server capabilities (tools, resources, prompts)")] = ["tools"],
+):
+    """
+    Add a new MCP server configuration to the current agent.
+    This command must be run from inside an agent directory.
+    """
+    try:
+        from agentscaffold.providers.mcp import load_mcp_servers, save_mcp_servers
+        from agentscaffold.providers.mcp.base import MCPServer
+    except ImportError:
+        typer.echo("Error: MCP provider module not found.")
+        raise typer.Exit(1)
+    
+    # Check if current directory looks like an agent directory
+    if not os.path.exists("main.py") and not os.path.isdir("agent"):
+        typer.echo("Error: This doesn't appear to be an agent directory.")
+        typer.echo("Run this command from inside your agent directory.")
+        raise typer.Exit(1)
+    
+    # Load existing servers
+    servers = load_mcp_servers()
+    
+    # Check if server already exists
+    if name in servers:
+        if not typer.confirm(f"MCP server '{name}' already exists. Override?"):
+            raise typer.Exit(1)
+    
+    # Create and save the new server
+    server = MCPServer(
+        name=name, 
+        url=url, 
+        api_key=api_key, 
+        auth_type=auth_type, 
+        capabilities=capability
+    )
+    
+    servers[name] = server.to_dict()
+    save_mcp_servers(servers)
+    
+    typer.echo(f"✅ Added MCP server '{typer.style(name, fg=typer.colors.CYAN)}'")
+    typer.echo(f"   URL: {url}")
+    typer.echo(f"   Capabilities: {', '.join(capability)}")
+    
+    # Check if httpx is installed for connectivity
+    try:
+        import httpx
+    except ImportError:
+        typer.echo("\n⚠️ Warning: httpx package is required for MCP connectivity.")
+        typer.echo("   Install with: pip install httpx")
+
+
+@mcp.command("list")
+def mcp_list():
+    """
+    List all configured MCP servers for the current agent.
+    This command must be run from inside an agent directory.
+    """
+    try:
+        from agentscaffold.providers.mcp import load_mcp_servers
+    except ImportError:
+        typer.echo("Error: MCP provider module not found.")
+        raise typer.Exit(1)
+    
+    # Check if current directory looks like an agent directory
+    if not os.path.exists("main.py") and not os.path.isdir("agent"):
+        typer.echo("Error: This doesn't appear to be an agent directory.")
+        typer.echo("Run this command from inside your agent directory.")
+        raise typer.Exit(1)
+    
+    servers = load_mcp_servers()
+    
+    if not servers:
+        typer.echo("No MCP servers configured for this agent.")
+        typer.echo("Use 'agentscaffold mcp add' to add a server.")
+        return
+    
+    typer.echo("📋 Configured MCP servers:")
+    for name, data in servers.items():
+        typer.echo(f"  • {typer.style(name, fg=typer.colors.CYAN)}")
+        typer.echo(f"    URL: {data['url']}")
+        typer.echo(f"    Capabilities: {', '.join(data.get('capabilities', ['tools']))}")
+        typer.echo(f"    Auth type: {data.get('auth_type', 'api_key')}")
+        if data.get('api_key'):
+            masked_key = "*" * (len(data['api_key']) - 4) + data['api_key'][-4:] if len(data['api_key']) > 4 else "****" 
+            typer.echo(f"    API key: {masked_key}")
+        typer.echo("")
+
+
+@mcp.command("remove")
+def mcp_remove(
+    name: Annotated[str, typer.Argument(help="Name of the MCP server to remove")]
+):
+    """
+    Remove an MCP server configuration from the current agent.
+    This command must be run from inside an agent directory.
+    """
+    try:
+        from agentscaffold.providers.mcp import load_mcp_servers, save_mcp_servers
+    except ImportError:
+        typer.echo("Error: MCP provider module not found.")
+        raise typer.Exit(1)
+    
+    # Check if current directory looks like an agent directory
+    if not os.path.exists("main.py") and not os.path.isdir("agent"):
+        typer.echo("Error: This doesn't appear to be an agent directory.")
+        typer.echo("Run this command from inside your agent directory.")
+        raise typer.Exit(1)
+    
+    servers = load_mcp_servers()
+    
+    if name not in servers:
+        typer.echo(f"Error: MCP server '{name}' not found.")
+        raise typer.Exit(1)
+    
+    if typer.confirm(f"Are you sure you want to remove MCP server '{name}'?"):
+        del servers[name]
+        save_mcp_servers(servers)
+        typer.echo(f"✅ Removed MCP server '{name}'")
+
+
+@mcp.command("test")
+def mcp_test(
+    name: Annotated[str, typer.Argument(help="Name of the MCP server to test")]
+):
+    """
+    Test connection to an MCP server.
+    This command must be run from inside an agent directory.
+    """
+    try:
+        from agentscaffold.providers.mcp import load_mcp_servers
+        from agentscaffold.providers.mcp.client import test_mcp_connection
+    except ImportError:
+        typer.echo("Error: MCP provider module not found.")
+        raise typer.Exit(1)
+    
+    # Check if current directory looks like an agent directory
+    if not os.path.exists("main.py") and not os.path.isdir("agent"):
+        typer.echo("Error: This doesn't appear to be an agent directory.")
+        typer.echo("Run this command from inside your agent directory.")
+        raise typer.Exit(1)
+    
+    # Check if httpx is installed
+    try:
+        import httpx
+    except ImportError:
+        typer.echo("Error: httpx package is required for MCP connectivity.")
+        typer.echo("Install with: pip install httpx")
+        raise typer.Exit(1)
+    
+    servers = load_mcp_servers()
+    
+    if name not in servers:
+        typer.echo(f"Error: MCP server '{name}' not found.")
+        raise typer.Exit(1)
+    
+    server_config = servers[name]
+    
+    with typer.progressbar(label=f"Testing connection to {name}", length=100) as progress:
+        progress.update(10)
+        result = test_mcp_connection(server_config)
+        progress.update(100)
+    
+    if result["success"]:
+        typer.echo(f"✅ Successfully connected to MCP server '{name}'")
+        typer.echo(f"   Available capabilities: {', '.join(result.get('capabilities', ['tools']))}")
+        if result.get("tools"):
+            typer.echo(f"   Available tools: {', '.join(tool['name'] for tool in result['tools'] if 'name' in tool)}")
+    else:
+        typer.echo(f"❌ Failed to connect to MCP server '{name}'")
+        typer.echo(f"   Error: {result.get('error', 'Unknown error')}")
+        typer.echo("\nCheck the URL and API key, and make sure the server is running.")
+
+
 if __name__ == "__main__":
     app()

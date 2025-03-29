@@ -597,6 +597,7 @@ class Agent(BaseAgent):
     search_provider: Optional[Any] = None
     memory_provider: Optional[Any] = None
     logging_provider: Optional[Any] = None
+    mcp_clients: Dict[str, Any] = Field(default_factory=dict)
     
     def __init__(self, **data):
         super().__init__(**data)
@@ -673,7 +674,64 @@ class Agent(BaseAgent):
         self.logging_provider = None
         {% endif %}
         
+        # Initialize MCP clients
+        self._init_mcp_clients()
+        
         print(f"✅ Agent initialized: {self.name}")
+    
+    def _init_mcp_clients(self):
+        """Initialize MCP clients from configuration."""
+        try:
+            # Import MCP-related modules
+            from agentscaffold.providers.mcp import load_mcp_servers
+            from agentscaffold.providers.mcp.client import MCPClient
+            
+            # Load MCP server configurations
+            mcp_servers = load_mcp_servers()
+            if not mcp_servers:
+                return
+            
+            # Initialize clients for each server
+            for name, server_config in mcp_servers.items():
+                try:
+                    self.mcp_clients[name] = MCPClient(server_config)
+                    print(f"✅ Initialized MCP client for server: {name}")
+                except Exception as e:
+                    print(f"❌ Failed to initialize MCP client for {name}: {e}")
+            
+            if self.mcp_clients:
+                print(f"Initialized {len(self.mcp_clients)} MCP clients")
+        except ImportError:
+            print("Note: MCP integration not available (missing dependencies)")
+        except Exception as e:
+            print(f"Error initializing MCP clients: {e}")
+    
+    async def call_mcp_tool(self, server_name: str, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Call a tool on an MCP server.
+        
+        Args:
+            server_name: Name of the MCP server
+            tool_name: Name of the tool to invoke
+            parameters: Tool parameters
+            
+        Returns:
+            Tool execution result
+        """
+        if server_name not in self.mcp_clients:
+            return {
+                "error": f"MCP server '{server_name}' not found",
+                "success": False
+            }
+        
+        client = self.mcp_clients[server_name]
+        try:
+            return await client.invoke_tool(tool_name, parameters)
+        except Exception as e:
+            return {
+                "error": str(e),
+                "success": False
+            }
     
     {% if memory_provider == "supabase" %}
     def _init_memory(self):
@@ -725,6 +783,102 @@ class Agent(BaseAgent):
                     self.logging_provider.start_conversation(user_id=context.get("user_id"))
                 self.logging_provider.log_user_message(message)
             
+            # Handle MCP tool requests if detected
+            if message.lower().startswith("mcp:") and len(self.mcp_clients) > 0:
+                try:
+                    # Parse MCP request format: "mcp:server_name:tool_name:param1=value1,param2=value2"
+                    parts = message[4:].strip().split(":", 2)
+                    if len(parts) >= 2:
+                        server_name = parts[0].strip()
+                        tool_name = parts[1].strip()
+                        params = {}
+                        
+                        # Parse parameters if provided
+                        if len(parts) > 2 and parts[2].strip():
+                            param_parts = parts[2].strip().split(",")
+                            for param in param_parts:
+                                if "=" in param:
+                                    key, value = param.split("=", 1)
+                                    params[key.strip()] = value.strip()
+                        
+                        # Call the MCP tool
+                        print(f"Calling MCP tool: {server_name}:{tool_name} with params: {params}")
+                        result = await self.call_mcp_tool(server_name, tool_name, params)
+                        
+                        # Process the result
+                        if result.get("success", False):
+                            response_message = f"MCP tool executed successfully:\n\n{json.dumps(result, indent=2)}"
+                            metadata["mcp_tool"] = {
+                                "server": server_name,
+                                "tool": tool_name,
+                                "success": True
+                            }
+                        else:
+                            response_message = f"Error executing MCP tool: {result.get('error', 'Unknown error')}"
+                            metadata["mcp_tool"] = {
+                                "server": server_name,
+                                "tool": tool_name,
+                                "success": False,
+                                "error": result.get("error")
+                            }
+                        
+                        # Return the MCP tool result
+                        return {
+                            "response": response_message,
+                            "metadata": metadata
+                        }
+                        
+                    else:
+                        # Malformed MCP request
+                        response_message = "Invalid MCP request format. Use: mcp:server_name:tool_name:param1=value1,param2=value2"
+                        metadata["mcp_error"] = "invalid_format"
+                        return {
+                            "response": response_message,
+                            "metadata": metadata
+                        }
+                        
+                except Exception as mcp_error:
+                    print(f"Error processing MCP request: {mcp_error}")
+                    response_message = f"Error processing MCP request: {str(mcp_error)}"
+                    metadata["mcp_error"] = str(mcp_error)
+                    return {
+                        "response": response_message,
+                        "metadata": metadata
+                    }
+            
+            # If message is "mcp:list", show available MCP servers and tools
+            if message.lower() == "mcp:list" and hasattr(self, 'mcp_clients'):
+                if not self.mcp_clients:
+                    return {
+                        "response": "No MCP servers configured. Use 'agentscaffold mcp add' to add servers.",
+                        "metadata": {"mcp_list": True}
+                    }
+                
+                response_parts = ["Available MCP servers and tools:"]
+                
+                for server_name, client in self.mcp_clients.items():
+                    response_parts.append(f"\n## {server_name}")
+                    response_parts.append(f"URL: {client.url}")
+                    
+                    # Try to get tools for this server
+                    try:
+                        tools = await client.get_tools()
+                        if tools:
+                            response_parts.append("\nAvailable tools:")
+                            for tool in tools:
+                                tool_name = tool.get("name", "Unnamed tool")
+                                tool_desc = tool.get("description", "No description")
+                                response_parts.append(f"- {tool_name}: {tool_desc}")
+                        else:
+                            response_parts.append("\nNo tools available from this server.")
+                    except Exception as e:
+                        response_parts.append(f"\nError fetching tools: {str(e)}")
+                
+                return {
+                    "response": "\n".join(response_parts),
+                    "metadata": {"mcp_list": True}
+                }
+            
             # Handle search if requested
             {% if search_provider != "none" %}
             search_query = input_data.get("search_query") or context.get("search_query")
@@ -762,6 +916,14 @@ class Agent(BaseAgent):
             # Add search results to the message if available
             if context.get("search_results"):
                 enhanced_message = f"Search results:\n{context['search_results']}\n\nUser message: {message}"
+            
+            # If we have MCP clients, add information about available MCP tools
+            if hasattr(self, 'mcp_clients') and self.mcp_clients:
+                # Add MCP information to the context
+                mcp_info = "You can use MCP tools with the syntax 'mcp:server:tool:param1=value1,param2=value2'.\n"
+                mcp_info += "Available MCP servers: " + ", ".join(self.mcp_clients.keys()) + "\n"
+                mcp_info += "Use 'mcp:list' to see available tools.\n\n"
+                enhanced_message = mcp_info + enhanced_message
             
             # Process with Pydantic AI
             try:
