@@ -1,1319 +1,538 @@
----
-title: Configuration
----
+# Daytona SDK Features
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+This document provides a comprehensive overview of all functions available in the Daytona Python SDK, with minimal examples for each feature.
 
-<Label>
-  Distribution: **Open Source**
-</Label>
+## Table of Contents
 
-The Daytona SDK provides flexible configuration options to customize its behavior and connection settings.
+- [Initialization](#initialization)
+- [Sandbox Management](#sandbox-management)
+- [File System Operations](#file-system-operations)
+- [Git Operations](#git-operations)
+- [Process Execution](#process-execution)
+- [LSP Server](#lsp-server)
 
-## Configuration Options
+## Initialization
 
-Daytona SDK provides an option to configure settings using the `DaytonaConfig` class in Python and TypeScript. The `DaytonaConfig` class accepts the following parameters:
+### Daytona
 
-- `api_key`: Your Daytona API key
-- `server_url`: URL of your Daytona server
-- `target`: Daytona Target to create the Workspaces on.
+Main class for interacting with the Daytona server API.
 
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-from daytona_sdk import DaytonaConfig
+from daytona_sdk import Daytona, DaytonaConfig
 
+# Initialize using environment variables
+daytona = Daytona()  # Uses DAYTONA_API_KEY, DAYTONA_SERVER_URL, DAYTONA_TARGET
+
+# Initialize with explicit configuration
 config = DaytonaConfig(
     api_key="your-api-key",
-    server_url="your-server-url",
-    target="local"
+    server_url="https://your-server.com",
+    target="us"
 )
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-import { DaytonaConfig } from '@daytonaio/sdk';
-
-const config: DaytonaConfig = {
-    apiKey: "your-api-key",          
-    serverUrl: "your-server-url",     
-    target: "local"                  
-};
+daytona = Daytona(config)
 ```
 
-</TabItem>
-</Tabs>
+## Sandbox Management
 
-## Environment Variables
+### Create Sandbox
 
-Daytona SDK supports environment variables for configuration. The SDK automatically looks for these environment variables:
+Creates a new sandbox with specified parameters.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| **`DAYTONA_API_KEY`** | Your Daytona API key. | None |
-| **`DAYTONA_SERVER_URL`** | URL of your Daytona server. | None |
-| **`DAYTONA_TARGET`** | Daytona Target to create the Workspaces on. | "local" |
-
-### Setting Environment Variables
-
-Daytona SDK can read configuration from environment variables. You can set these environment variables using the following methods:
-
-- [Using a **`.env`** file](#using-a-env-file)
-- [Using Shell Environment](#using-shell-environment)
-
-#### Using a **`.env`** File
-
-Create a `.env` file in your project root directory:
-
-```bash
-DAYTONA_API_KEY=your-api-key
-DAYTONA_SERVER_URL=https://your-server-url
-DAYTONA_TARGET=local
-```
-
-- `DAYTONA_API_KEY`: Your Daytona API key.
-- `DAYTONA_SERVER_URL`: URL of your Daytona server.
-- `DAYTONA_TARGET`: Daytona Target to create the Workspaces on.
-
-#### Using Shell Environment
-
-Set environment variables in your shell:
-
-<Tabs>
-<TabItem label="Bash/Zsh" icon="seti:shell">
-```bash
-export DAYTONA_API_KEY=your-api-key
-export DAYTONA_SERVER_URL=https://your-server-url
-```
-</TabItem>
-<TabItem label="Windows PowerShell" icon="seti:powershell">
-```bash
-$env:DAYTONA_API_KEY="your-api-key"
-$env:DAYTONA_SERVER_URL="https://your-server-url"
-```
-</TabItem>
-</Tabs>
-
-## Configuration Precedence
-
-The SDK uses the following precedence order for configuration (highest to lowest):
-
-1. Explicitly passed configuration in code.
-2. Environment variables.
-3. Configuration file.
-4. Default values.
-
----
-title: File System Operations
----
-
-import { Tabs, TabItem } from '@astrojs/starlight/components';
-
-<Label>
-  Distribution: **Open Source**
-</Label>
-
-The Daytona SDK provides comprehensive file system operations through the `fs` module in workspaces. This guide covers all available file system operations and best practices.
-
-## Basic Operations
-
-Daytona SDK provides an option to interact with the file system in Workspaces. You can perform various operations like listing files, creating directories, reading and writing files, and more.
-
-### Listing Files and Directories
-
-Daytona SDK provides an option to list files and directories in a Workspace using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# List files in a directory
-files = workspace.fs.list_files("/workspace")
-for file in files:
-    print(f"Name: {file.name}")
-    print(f"Is directory: {file.is_dir}")
-    print(f"Size: {file.size}")
-    print(f"Modified: {file.mod_time}")
+from daytona_sdk import CreateSandboxParams, SandboxResources
 
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// List files in a directory
-const files = await workspace.fs.listFiles("/workspace");
+# Create default Python sandbox
+sandbox = daytona.create()
 
-files.forEach(file => {
-    console.log(`Name: ${file.name}`);
-    console.log(`Is directory: ${file.isDir}`);
-    console.log(`Size: ${file.size}`);
-    console.log(`Modified: ${file.modTime}`);
-});
+# Create custom sandbox
+params = CreateSandboxParams(
+    language="python",
+    name="my-sandbox",
+    env_vars={"DEBUG": "true"},
+    resources=SandboxResources(cpu=2, memory=4, disk=20),
+    auto_stop_interval=60  # Auto-stop after 1 hour of inactivity
+)
+sandbox = daytona.create(params, timeout=40)
 ```
 
-</TabItem>
-</Tabs>
+### Remove Sandbox
 
-### Creating Directories
+Remove a sandbox when it's no longer needed.
 
-Daytona SDK provides an option to create directories with specific permissions using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Create a directory
-workspace.fs.create_folder("/workspace/new-dir")
-
-# Create with specific permissions
-
-workspace.fs.create_folder("/workspace/new-dir", "755")
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Create a directory
-await workspace.fs.createFolder("/workspace/new-dir");
-
-// Create with specific permissions
-await workspace.fs.createFolder("/workspace/new-dir", "755");
+daytona.remove(sandbox)
 ```
 
-</TabItem>
-</Tabs>
+### List Sandboxes
 
-### File Operations
+List all available sandboxes.
 
-Daytona SDK provides options to read, write, upload, download, and delete files in Workspaces using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Upload a file
+sandboxes = daytona.list()
+for sandbox in sandboxes:
+    print(f"{sandbox.id}: {sandbox.status}")
+```
+
+### Get Sandbox
+
+Retrieve an existing sandbox by ID.
+
+```python
+sandbox = daytona.get_current_sandbox("my-sandbox-id")
+```
+
+### Sandbox Info
+
+Get detailed information about a sandbox.
+
+```python
+info = sandbox.info()
+print(f"Status: {info.state}")
+print(f"Resources: {info.resources.cpu} CPU, {info.resources.memory} RAM")
+```
+
+### Start/Stop Sandbox
+
+Control sandbox lifecycle.
+
+```python
+# Start sandbox
+sandbox.start()
+
+# Stop sandbox
+sandbox.stop()
+```
+
+### Auto-stop Interval
+
+Configure how long until inactive sandbox stops.
+
+```python
+# Auto-stop after 30 minutes of inactivity
+sandbox.set_autostop_interval(30)
+
+# Disable auto-stop
+sandbox.set_autostop_interval(0)
+```
+
+### Preview Link
+
+Get URL for accessing applications running in the sandbox.
+
+```python
+# Get preview link for a web server running on port 3000
+url = sandbox.get_preview_link(3000)
+print(f"Access your app at: {url}")
+```
+
+### Archive Sandbox
+
+Archive a sandbox to save resources.
+
+```python
+# First stop the sandbox
+sandbox.stop()
+# Then archive it
+sandbox.archive()
+```
+
+## File System Operations
+
+### Create Folder
+
+Create a new directory in the sandbox.
+
+```python
+sandbox.fs.create_folder("/workspace/data", "755")
+```
+
+### Upload File
+
+Upload a file to the sandbox.
+
+```python
+# Upload string content
+content = b"Hello, World!"
+sandbox.fs.upload_file("/workspace/file.txt", content)
+
+# Upload local file
 with open("local_file.txt", "rb") as f:
     content = f.read()
-workspace.fs.upload_file("/workspace/remote_file.txt", content)
-
-# Download a file
-
-content = workspace.fs.download_file("/workspace/remote_file.txt")
-with open("local_file.txt", "wb") as f:
-    f.write(content)
-
-# Delete a file
-
-workspace.fs.delete_file("/workspace/file.txt")
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Upload a file
-const fileContent = new File(
-    [Buffer.from('Hello, World!')],
-    'data.txt',
-    { type: 'text/plain' }
-);
-await workspace.fs.uploadFile("/workspace/remote_file.txt", fileContent);
-
-// Download a file
-const downloadedFile = await workspace.fs.downloadFile("/workspace/remote_file.txt");
-console.log('File content:', downloadedFile.toString())
-
-// Delete a file
-await workspace.fs.deleteFile("/workspace/file.txt");
+sandbox.fs.upload_file("/workspace/data/file.txt", content)
 ```
 
-</TabItem>
-</Tabs>
+### Download File
 
-## Advanced Operations
+Download a file from the sandbox.
 
-Daytona SDK provides advanced file system operations like file permissions, search and replace, and more.
-
-### File Permissions
-
-Daytona SDK provides an option to set file permissions, get file permissions, and set directory permissions recursively using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Set file permissions
-workspace.fs.set_file_permissions("/workspace/file.txt", "644")
-
-# Get file permissions
-
-file_info = workspace.fs.get_file_info("/workspace/file.txt")
-print(f"Permissions: {file_info.permissions}")
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Set file permissions
-await workspace.fs.setFilePermissions("/workspace/file.txt", { mode: "644" });
-
-// Get file permissions
-const fileInfo = await workspace.fs.getFileDetails("/workspace/file.txt");
-console.log(`Permissions: ${fileInfo.permissions}`);
+content = sandbox.fs.download_file("/workspace/file.txt")
+print(content.decode("utf-8"))
 ```
 
-</TabItem>
-</Tabs>
+### List Files
 
-### File Search and Replace
+List files in a directory.
 
-Daytona SDK provides an option to search for text in files and replace text in files using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Search for text in files; if a folder is specified, the search is recursive
-results = workspace.fs.find_files(
-    path="/workspace/src",
-    pattern="text-of-interest"
-)
-for match in results:
-    print(f"Absolute file path: {match.file}")
-    print(f"Line number: {match.line}")
-    print(f"Line content: {match.content}")
-    print("\n")
+files = sandbox.fs.list_files("/workspace")
+for file in files:
+    print(f"{file.name}: {'directory' if file.is_dir else 'file'}, {file.size} bytes")
+```
 
-# Replace text in files
+### Get File Info
 
-workspace.fs.replace_in_files(
+Get metadata about a file.
+
+```python
+info = sandbox.fs.get_file_info("/workspace/file.txt")
+print(f"Size: {info.size}, Modified: {info.mod_time}")
+```
+
+### Move Files
+
+Move or rename files.
+
+```python
+sandbox.fs.move_files("/workspace/old.txt", "/workspace/new.txt")
+```
+
+### Delete File
+
+Delete a file.
+
+```python
+sandbox.fs.delete_file("/workspace/file.txt")
+```
+
+### Find in Files
+
+Search for content in files.
+
+```python
+matches = sandbox.fs.find_files("/workspace", "TODO:")
+for match in matches:
+    print(f"{match.file}:{match.line}: {match.content}")
+```
+
+### Search Files
+
+Find files by name pattern.
+
+```python
+result = sandbox.fs.search_files("/workspace", "*.py")
+for file in result.files:
+    print(file)
+```
+
+### Replace in Files
+
+Perform text replacements across files.
+
+```python
+results = sandbox.fs.replace_in_files(
     files=["/workspace/file1.txt", "/workspace/file2.txt"],
     pattern="old_text",
     new_value="new_text"
 )
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Search for text in files; if a folder is specified, the search is recursive
-const results = await workspace.fs.findFiles({
-    path="/workspace/src",
-    pattern: "text-of-interest"
-});
-results.forEach(match => {
-    console.log('Absolute file path:', match.file)
-    console.log('Line number:', match.line)
-    console.log('Line content:', match.content)
-});
-
-// Replace text in files
-await workspace.fs.replaceInFiles(
-    ["/workspace/file1.txt", "/workspace/file2.txt"],
-    "old_text",
-    "new_text"
-);
 ```
 
-</TabItem>
-</Tabs>
+### Set File Permissions
 
----
-title: Getting Started
----
+Change file permissions and ownership.
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
-
-<Label>
-  Distribution: **Open Source**
-</Label>
-
-The Daytona SDK provides official Python and TypeScript interfaces for interacting with Daytona, enabling you to programmatically manage development environments and execute code.
-
-View the Daytona SDK repository on [GitHub](https://github.com/daytonaio/sdk).
-
-Follow the step by step guide to create and run your first Daytona Workspace for an AI Agent.
-
-## Install Daytona
-
-Install Daytona by following the [installation instructions](https://www.daytona.io/docs/installation/installation/). If you have Beta access to the Daytona platform, create an account and log in.
-
-## Set Up Your Environment Variables
-
-To authenticate with Daytona, you need an API key. You can obtain an API key from the Daytona platform or generate one using the Daytona CLI.
-
-<Tabs>
-<TabItem label="Cloud">
-
-1. Navigate to the Daytona platform.
-2. Go to API Keys.
-3. Click the **`Create Key`** button.
-4. Paste the API key in your **`.env`** file.
-
-</TabItem>
-<TabItem label="OSS">
-1. Type the following command:
-
-```bash
-daytona api-key generate
-```
-
-2. Paste the API key in your **`.env`** file.
-</TabItem>
-
-</Tabs>
-
-## Install the Daytona SDK
-
-Daytona provides official Python and TypeScript SDKs for interacting with the Daytona platform. Install the SDK using your preferred method.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
-```bash
-pip install daytona-sdk
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```bash
-# Using npm
-npm install @daytonaio/sdk
-
-# Using yarn
-
-yarn add @daytonaio/sdk
-
-# Using pnpm
-
-pnpm add @daytonaio/sdk
-
-```
-</TabItem>
-</Tabs>
-
-## Write Code to Create a Workspace
-
-Create and run your code within Daytona Workspace using the SDK. Daytona provides a simple and intuitive interface for interacting with Daytona.
-
-Use the Daytona SDK [Python examples](https://github.com/daytonaio/sdk/tree/main/examples/python) or [TypeScript/JavaScript examples](https://github.com/daytonaio/sdk/tree/main/examples/typescript) to create a Workspace and run your code.
-
-### Execute Commands
-
-Run the following code to create a Daytona Workspace and execute commands:
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-from daytona_sdk import Daytona, CreateWorkspaceParams
-
-# Initialize the Daytona client
-daytona = Daytona()
-
-# Create the workspace instance
-params = CreateWorkspaceParams(language="python")
-workspace = daytona.create(params)
-
-# Run the code securely inside the workspace
-response = workspace.process.code_run('print("Sum of 3 and 4 is " + str(3 + 4))')
-if response.exit_code != 0:
-    print(f"Error running code: {response.exit_code} {response.result}")
-else:
-    print(response.result)
-
-# Clean up the workspace
-daytona.remove(workspace)
-
+sandbox.fs.set_file_permissions(
+    path="/workspace/script.sh",
+    mode="755",  # Make executable
+    owner="daytona"
+)
 ```
 
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-import { Daytona } from '@daytonaio/sdk'
+## Git Operations
 
-async function main() {
-  // Initialize the Daytona client
-  const daytona = new Daytona()
+### Clone Repository
 
-  try {
-    // Create the workspace instance
-    const workspace = await daytona.create({
-      language: 'python',
-    })
-    // Run the code securely inside the workspace
-    const response = await workspace.process.codeRun(
-      'print("Sum of 3 and 4 is " + str(3 + 4))',
-    )
-    if (response.exitCode !== 0) {
-      console.error('Error running code:', response.exitCode, response.result)
-    } else {
-      console.log(response.result)
-    }
-  } catch (error) {
-    console.error('Workspace flow error:', error)
-  } finally {
-    // Clean up the workspace
-    await daytona.remove(workspace)
-  }
-}
+Clone a Git repository into the sandbox.
 
-main()
-
-```
-</TabItem>
-</Tabs>
-
-## Start your Workspace
-
-Daytona provides two methods for starting your Workspace:
-
-- Using Python
-- Using TypeScript/JavaScript
-
-Choose the appropriate method based on your preferred language.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
-```bash
-python main.py
-```
-
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```bash
-npx tsx ./index.ts
-```
-</TabItem>
-</Tabs>
-
----
-title: Git Operations
----
-
-import { Tabs, TabItem } from '@astrojs/starlight/components';
-
-<Label>
-  Distribution: **Open Source**
-</Label>
-
-The Daytona SDK provides built-in Git support through the `git` module in Workspaces. This guide covers all available Git operations and best practices.
-
-## Basic Operations
-
-Daytona SDK provides an option to clone, check status, and manage Git repositories in Workspaces. You can interact with Git repositories using the `git` module.
-
-### Cloning Repositories
-
-Daytona SDK provides an option to clone Git repositories into Workspaces using Python and TypeScript. You can clone public or private repositories, specific branches, and authenticate using personal access tokens.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Basic clone
-workspace.git.clone(
+sandbox.git.clone(
     url="https://github.com/user/repo.git",
     path="/workspace/repo"
 )
 
 # Clone with authentication
+sandbox.git.clone(
+    url="https://github.com/user/private-repo.git",
+    path="/workspace/private-repo",
+    username="user",
+    password="token"
+)
+```
 
-workspace.git.clone(
-    url="<https://github.com/user/repo.git>",
+### Git Status
+
+Check repository status.
+
+```python
+status = sandbox.git.status("/workspace/repo")
+print(f"Branch: {status.current_branch}")
+print(f"Modified files: {status.modified}")
+```
+
+### Git Add
+
+Stage files for commit.
+
+```python
+sandbox.git.add("/workspace/repo", ["file.txt", "README.md"])
+```
+
+### Git Commit
+
+Commit staged changes.
+
+```python
+sandbox.git.commit(
     path="/workspace/repo",
-    username="git",
-    password="personal_access_token"
+    message="Add new feature",
+    author="John Doe",
+    email="john@example.com"
 )
+```
 
-# Clone specific branch
+### Git Push
 
-workspace.git.clone(
-    url="<https://github.com/user/repo.git>",
+Push changes to remote repository.
+
+```python
+sandbox.git.push(
     path="/workspace/repo",
-    branch="develop"
-)
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Basic clone
-await workspace.git.clone(
-    "https://github.com/user/repo.git",
-    "/workspace/repo"
-);
-
-// Clone with authentication
-await workspace.git.clone(
-    "https://github.com/user/repo.git",
-    "/workspace/repo",
-    undefined,
-    undefined,
-    "git",
-    "personal_access_token"
-);
-
-// Clone specific branch
-await workspace.git.clone(
-    "https://github.com/user/repo.git",
-    "/workspace/repo",
-    "develop"
-);
-```
-
-</TabItem>
-</Tabs>
-
-### Repository Status
-
-Daytona SDK provides an option to check the status of Git repositories in Workspaces. You can get the current branch, modified files, number of commits ahead and behind main branch using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
-```python
-# Get repository status
-status = workspace.git.status("/workspace/repo")
-print(f"Current branch: {status.current_branch}")
-print(f"Commits ahead: {status.ahead}")
-print(f"Commits behind: {status.behind}")
-for file in status.file_status:
-    print(f"File: {file.name}")
-
-# List branches
-
-response = workspace.git.branches("/workspace/repo")
-for branch in response.branches:
-    print(f"Branch: {branch}")
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Get repository status
-const status = await workspace.git.status("/workspace/repo");
-console.log(`Current branch: ${status.currentBranch}`);
-console.log(`Commits ahead: ${status.ahead}`);
-console.log(`Commits behind: ${status.behind}`);
-status['FileStatus[]'].forEach(file => {
-    console.log(`File: ${file.name}`);
-});
-
-// List branches
-const response = await workspace.git.branches("/workspace/repo");
-response.branches.forEach(branch => {
-    console.log(`Branch: ${branch}`);
-});
-```
-
-</TabItem>
-</Tabs>
-
-## Branch Operations
-
-Daytona SDK provides an option to manage branches in Git repositories. You can create, switch, and delete branches.
-
-### Managing Branches
-
-Daytona SDK provides an option to create, switch, and delete branches in Git repositories using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
-```python
-# Create new branch
-workspace.git.create_branch("/workspace/repo", "feature/new-feature")
-
-# Switch branch
-
-workspace.git.checkout("/workspace/repo", "feature/new-feature")
-
-# Delete branch
-
-workspace.git.delete_branch("/workspace/repo", "feature/old-feature")
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Create new branch
-await workspace.git.createBranch("/workspace/repo", "feature/new-feature");
-
-// Switch branch
-await workspace.git.checkout("/workspace/repo", "feature/new-feature");
-
-// Delete branch
-await workspace.git.deleteBranch("/workspace/repo", "feature/old-feature");
-```
-
-</TabItem>
-</Tabs>
-
-## Staging and Committing
-
-Daytona SDK provides an option to stage and commit changes in Git repositories. You can stage specific files, all changes, and commit with a message using Python and TypeScript.
-
-### Working with Changes
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
-```python
-# Stage specific files
-workspace.git.add("/workspace/repo", ["file1.txt", "file2.txt"])
-
-# Stage all changes
-
-workspace.git.add("/workspace/repo", ["."])
-
-# Commit changes
-
-workspace.git.commit("/workspace/repo", "feat: add new feature")
-
-# Get commit history
-
-commits = workspace.git.log("/workspace/repo")
-for commit in commits:
-    print(f"Commit: {commit.hash}")
-    print(f"Author: {commit.author}")
-    print(f"Message: {commit.message}")
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Stage specific files
-await workspace.git.add("/workspace/repo", ["file1.txt", "file2.txt"]);
-
-// Stage all changes
-await workspace.git.add("/workspace/repo", ["."]);
-
-// Commit changes
-await workspace.git.commit("/workspace/repo", "feat: add new feature");
-
-// Get commit history
-const commits = await workspace.git.log("/workspace/repo");
-commits.forEach(commit => {
-    console.log(`Commit: ${commit.hash}`);
-    console.log(`Author: ${commit.author}`);
-    console.log(`Message: ${commit.message}`);
-});
-```
-
-</TabItem>
-</Tabs>
-
-## Remote Operations
-
-Daytona SDK provides an option to work with remote repositories in Git. You can push changes, pull changes, and list remotes.
-
-### Working with Remotes
-
-Daytona SDK provides an option to push, pull, and list remotes in Git repositories using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
-```python
-# Push changes
-workspace.git.push("/workspace/repo")
-
-# Pull changes
-
-workspace.git.pull("/workspace/repo")
-
-# List remotes
-
-remotes = workspace.git.list_remotes("/workspace/repo")
-for remote in remotes:
-    print(f"Remote: {remote.name} URL: {remote.url}")
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Push changes
-await workspace.git.push("/workspace/repo");
-
-// Push to specific remote and branch
-await workspace.git.push("/workspace/repo", "origin", "feature/new-feature");
-
-// Pull changes
-await workspace.git.pull("/workspace/repo");
-
-// Pull from specific remote and branch
-await workspace.git.pull("/workspace/repo", "origin", "main");
-```
-
-</TabItem>
-</Tabs>
-
----
-title: Daytona Documentation
-description: Start managing your Workspaces with Daytona.
-template: doc
-head:
-  - tag: title
-    content: Documentation · Daytona
-  - tag: meta
-    attrs:
-        property: og:title
-        content: Documentation · Daytona
-  - tag: meta
-    attrs:
-        name: twitter:title
-        content: Documentation · Daytona
-tableOfContents: false
----
-
-import { Tabs, TabItem } from '@astrojs/starlight/components';
-
-<Label>
-  Distribution: **Open Source**
-</Label>
-
-The Daytona SDK provides official Python and TypeScript interfaces for interacting with Daytona, enabling you to programmatically manage development environments and execute code.
-
-### Quick Start
-
-<Tabs>
-  <TabItem label="Python" icon="seti:python">
-
-  ```bash
-  pip install daytona_sdk
-  ```
-
-  ```python
-  from daytona_sdk import Daytona, DaytonaConfig
-
-  # Define the configuration
-  config = DaytonaConfig(
-    api_key="your-api-key",
-    server_url="your-server-url",
-    target="us"
-  )
-
-  # Initialize the Daytona client
-  daytona = Daytona(config)
-
-  # Create the workspace instance
-  workspace = daytona.create()
-
-  # Run the code securely inside the workspace
-  response = workspace.process.code_run('print("Hello World from code!")')
-  if response.exit_code != 0:
-    print(f"Error: {response.exit_code} {response.result}")
-  else:
-      print(response.result)
-  
-  daytona.remove(workspace)
-  ```
-
-  </TabItem>
-
-  <TabItem label="TypeScript" icon="seti:typescript">
-
-  ```bash
-  npm install @daytonaio/sdk
-  ```
-
-  ```typescript
-  import { Daytona } from '@daytonaio/sdk';
-
-  // Initialize the Daytona client
-  const daytona = new Daytona({
-    apiKey: 'your-api-key',
-    serverUrl: 'your-server-url',
-    target: 'us'
-  });
-
-  // Create the workspace instance
-  const workspace = await daytona.create({
-    language: 'typescript',
-  });
-
-  // Run the code securely inside the workspace
-  const response = await workspace.process.codeRun('console.log("Hello World from code!")')
-  console.log(response.result);
-  ```
-
-  </TabItem>
-</Tabs>
-
-<DocumentList title="About">
-  <DocumentListItem
-    title="Getting Started"
-    subtitle="Learn about Daytona SDK and how it can help you manage your development environments."
-    href="/docs/getting-started"
-  />
-  <DocumentListItem
-    title="Configuration"
-    subtitle="Get started with Daytona SDK and learn how to use and configure your development environments."
-    href="/docs/configuration"
-  />
-</DocumentList>
-
-<DocumentList title="Workspaces">
-  <DocumentListItem
-    title="Management"
-    subtitle="Learn how to create, manage, and remove workspaces using the Daytona SDK."
-    href="/docs/workspace-management"
-  />
-</DocumentList>
-
-<DocumentList title="Agent Toolbox">
-  <DocumentListItem
-    title="File System Operations"
-    subtitle="Learn how to manage files and directories in your Workspaces using the Daytona SDK."
-    href="/docs/k/file-system-operations"
-  />
-  <DocumentListItem
-    title="Git Operations"
-    subtitle="Learn how to manage Git repositories in your Workspaces using the Daytona SDK."
-    href="/docs/git-operations"
-  />
-  <DocumentListItem
-    title="Process & Code Execution"
-    subtitle="Learn about running commands and code in isolated environments using the Daytona SDK."
-    href="/docs/process-code-execution"
-  />
-  <DocumentListItem
-    title="Language Server Protocol"
-    subtitle="Learn how to use Language Server Protocol (LSP) support in your Workspaces using the Daytona SDK."
-    href="/docs/language-server-protocol"
-  />
-</DocumentList>
-
----
-title: Language Server Protocol
----
-
-import { Tabs, TabItem } from '@astrojs/starlight/components';
-
-<Label>
-  Distribution: **Open Source**
-</Label>
-
-The Daytona SDK provides Language Server Protocol (LSP) support through workspace instances. This enables advanced language features like code completion, diagnostics, and more.
-
-## Creating LSP Servers
-
-Daytona SDK provides an option to create LSP servers using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
-```python
-from daytona_sdk import Daytona, LspLanguageId
-
-# Create workspace
-
-daytona = Daytona()
-workspace = daytona.create()
-
-# Create LSP server for Python
-
-lsp_server = workspace.create_lsp_server(
-    language_id=LspLanguageId.PYTHON,
-    path_to_project="/workspace/project"
-)
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-import { Daytona, LspLanguageId } from '@daytonaio/sdk'
-
-// Create workspace
-const daytona = new Daytona()
-const workspace = await daytona.create({
-    language: 'typescript'
-})
-
-// Create LSP server for TypeScript
-const lspServer = workspace.createLspServer(
-    LspLanguageId.TYPESCRIPT,
-    "/workspace/project"
+    username="user",
+    password="github_token"
 )
 ```
 
-</TabItem>
-</Tabs>
+### Git Pull
 
-## Supported Languages
+Pull changes from remote repository.
 
-Daytona SDK provides an option to create LSP servers for various languages through the `LspLanguageId` enum in Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-from daytona_sdk import LspLanguageId
-
-# Available language IDs
-
-LspLanguageId.PYTHON
-LspLanguageId.TYPESCRIPT
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-import { LspLanguageId } from '@daytonaio/sdk'
-
-// Available language IDs
-LspLanguageId.PYTHON      
-LspLanguageId.TYPESCRIPT    
-```
-
-</TabItem>
-</Tabs>
-
-- `LspLanguageId.PYTHON`: Python language server.
-- `LspLanguageId.TYPESCRIPT`: TypeScript/JavaScript language server.
-
-## LSP Features
-
-Daytona SDK provides various LSP features for code analysis and editing.
-
-### Code Completion
-
-Daytona SDK provides an option to get code completions for a specific position in a file using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
-```python
-completions = lsp_server.completions(
-    path="/workspace/project/main.py",
-    position={"line": 10, "character": 15}
+sandbox.git.pull(
+    path="/workspace/repo",
+    username="user",
+    password="github_token"
 )
-print(f"Completions: {completions}")
 ```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-const completions = await lspServer.getCompletions({
-    path: "/workspace/project/main.ts",
-    position: { line: 10, character: 15 }
-})
-console.log('Completions:', completions)
-```
-</TabItem>
-</Tabs>
 
----
-title: Process and Code Execution
----
+### List Branches
 
-import { Tabs, TabItem } from '@astrojs/starlight/components';
+List branches in the repository.
 
-<Label>
-  Distribution: **Open Source**
-</Label>
-
-The Daytona SDK provides powerful process and code execution capabilities through the `process` module in workspaces. This guide covers all available process operations and best practices.
-
-## Code Execution
-
-Daytona SDK provides an option to execute code in Python and TypeScript.
-
-### Running Code
-
-Daytona SDK provides an option to run code snippets in Python and TypeScript. You can execute code with input, timeout, and environment variables.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Run Python code
-response = workspace.process.code_run('''
-def greet(name):
-    return f"Hello, {name}!"
-
-print(greet("Daytona"))
-''')
-
-print(response.result)
-
+branches = sandbox.git.branches("/workspace/repo")
+for branch in branches.branches:
+    print(branch)
 ```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Run TypeScript code
-const response = await workspace.process.codeRun(`
-function greet(name: string): string {
-    return \`Hello, \${name}!\`;
-}
-
-console.log(greet("Daytona"));
-`);
-console.log(response.result);
-
-// Run code with input
-const response = await workspace.process.codeRun(
-    'const name = prompt("Enter name: ");\nconsole.log(`Hello, ${name}!`);',
-    { input: "Daytona" }
-);
-console.log(response.result);
-
-// Run code with timeout
-const response = await workspace.process.codeRun(
-    'setTimeout(() => console.log("Done"), 2000);',
-    { timeout: 5000 }
-);
-console.log(response.result);
-```
-
-</TabItem>
-</Tabs>
 
 ## Process Execution
 
-Daytona SDK provides an option to execute shell commands and manage background processes in Workspaces.
+### Execute Command
 
-### Running Commands
+Run a shell command in the sandbox.
 
-Daytona SDK provides an option to execute shell commands in Python and TypeScript. You can run commands with input, timeout, and environment variables.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Execute shell command
-response = workspace.process.exec("ls -la")
-print(response.output)
+response = sandbox.process.exec("ls -la /workspace")
+print(f"Exit code: {response.exit_code}")
+print(f"Output: {response.result}")
 ```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Execute shell command
-const response = await workspace.process.executeCommand("ls -la");
-console.log(response.output);
-```
-</TabItem>
-</Tabs>
 
-## Sessions (Background Processes)
+### Execute Code
 
-Daytona SDK provides an option to start, stop, and manage background process sessions in Workspaces. You can run long-running commands, monitor process status, and list all running processes.
+Run code in the sandbox without creating a file.
 
-### Managing Long-Running Processes
-
-Daytona SDK provides an option to start and stop background processes. You can run long-running commands and monitor process status.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Check session's executed commands
-session = workspace.process.get_session(session_id)
-print(f"Session {process_id}:")
-for command in session.commands:
-    print(f"Command: {command.command}, Exit Code: {command.exit_code}")
+# Run Python code
+response = sandbox.process.code_run("""
+import os
+print(f"Current directory: {os.getcwd()}")
+print(f"Python version: {os.__version__}")
+""")
+print(response.result)
+```
 
-# List all running sessions
+### Interactive Sessions
 
-sessions = workspace.process.list_sessions()
+Create and manage long-running interactive sessions.
+
+```python
+# Create a session
+session_id = "my-session"
+sandbox.process.create_session(session_id)
+
+# Execute commands in the session
+from daytona_api_client import SessionExecuteRequest
+
+# Change directory in the session
+req = SessionExecuteRequest(command="cd /workspace", var_async=False)
+sandbox.process.execute_session_command(session_id, req)
+
+# Run a command in the new directory
+req = SessionExecuteRequest(command="pwd", var_async=False)
+response = sandbox.process.execute_session_command(session_id, req)
+print(response.output)  # Should print "/workspace"
+
+# Clean up
+sandbox.process.delete_session(session_id)
+```
+
+### List Sessions
+
+List all active sessions.
+
+```python
+sessions = sandbox.process.list_sessions()
 for session in sessions:
-    print(f"PID: {session.id}, Commands: {session.commands}")
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Check session's executed commands
-const session = await workspace.process.getSession(sessionId);
-console.log(`Session ${sessionId}:`);
-for (const command of session.commands) {
-    console.log(`Command: ${command.command}, Exit Code: ${command.exitCode}`);
-}
-
-// List all running sessions
-const sessions = await workspace.process.listSessions();
-for (const session of sessions) {
-    console.log(`PID: ${session.id}, Commands: ${session.commands}`);
-}
-
+    print(f"Session: {session.session_id}")
 ```
 
-</TabItem>
-</Tabs>
+## LSP Server
 
-## Best Practices
+### Create LSP Server
 
-Daytona SDK provides best practices for process and code execution in Workspaces.
+Create a Language Server Protocol server for code intelligence.
 
-1. **Resource Management**
-
-- Use sessions for long-running operations
-- Clean up sessions after execution
-- Handle session exceptions properly
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
-   ```python
-   # Python - Clean up session
-   try:
-       session_id = workspace.process.create_session("long-running-cmd")
-       # Do work...
-   finally:
-       workspace.process.delete_session(session_id)
-   ```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-   ```typescript
-   // TypeScript - Clean up processes
-   try {
-       const sessionId = await workspace.process.createSession("long-running-cmd");
-       // Do work...
-   } finally {
-       await workspace.process.deleteSession(processId);
-   }
-   ```
-</TabItem>
-</Tabs>
-
-2. **Error Handling**
-
-- Handle process exceptions properly
-- Log error details for debugging
-- Use try-catch blocks for error handling
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-try:
-    response = workspace.process.code_run("invalid python code")
-except ProcessExecutionError as e:
-    print(f"Execution failed: {e}")
-    print(f"Exit code: {e.exit_code}")
-    print(f"Error output: {e.stderr}")
+from daytona_sdk import LspLanguageId
+
+# Create LSP server for Python
+lsp = sandbox.create_lsp_server(LspLanguageId.PYTHON, "/workspace/project")
 ```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-try {
-    const response = await workspace.process.codeRun("invalid typescript code");
-} catch (e) {
-    if (e instanceof ProcessExecutionError) {
-        console.error("Execution failed:", e);
-        console.error("Exit code:", e.exitCode);
-        console.error("Error output:", e.stderr);
-    }
-}
-```
-</TabItem>
-</Tabs>
 
-## Common Issues
+### Start/Stop LSP Server
 
-Daytona SDK provides an option to troubleshoot common issues related to process execution and code execution.
+Manage LSP server lifecycle.
 
-### Process Execution Failed
-
-- Check command syntax
-- Verify required dependencies
-- Ensure sufficient permissions
-
-### Process Timeout
-
-- Adjust timeout settings
-- Optimize long-running operations
-- Consider using background processes
-
-### Resource Limits
-
-- Monitor process memory usage
-- Handle process cleanup properly
-- Use appropriate resource constraints
-
----
-title: Workspace Management
----
-
-import { Tabs, TabItem } from '@astrojs/starlight/components';
-
-<Label>
-  Distribution: **Open Source**
-</Label>
-
-Workspaces are isolated development environments managed by Daytona. This guide covers how to create, manage, and remove workspaces using the SDK.
-
-## Creating Workspaces
-
-Daytona SDK provides an option to create workspaces with default or custom configurations. You can specify the language, image, resources, environment variables, and volumes for the workspace.
-
-### Basic Workspace Creation
-
-Daytona SDK provides methods to create Workspaces with default configurations, specific languages, or custom IDs using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-from daytona_sdk import Daytona
+# Start the server
+lsp.start()
 
-daytona = Daytona()
+# Use LSP features...
 
-# Create a basic workspace
-
-workspace = daytona.create()
-
-# Create a workspace with specific language
-
-params = CreateWorkspaceParams(language="python")
-workspace = daytona.create(params)
-
-# Create a workspace with custom ID
-
-params = CreateWorkspaceParams(id="my-workspace")
-workspace = daytona.create(params)
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-import { Daytona } from '@daytonaio/sdk';
-
-const daytona = new Daytona();
-
-// Create a basic workspace
-const workspace = await daytona.create();
-
-// Create a workspace with specific language
-const workspace = await daytona.create({ language: 'typescript' });
-
-// Create a workspace with custom ID
-const workspace = await daytona.create({ id: 'my-workspace' });
+# Stop the server when done
+lsp.stop()
 ```
 
-</TabItem>
-</Tabs>
+### Open/Close Files
 
-## Workspace Information
+Notify the LSP server about file operations.
 
-Daytona SDK provides methods to get information about a workspace, such as ID, root directory, and status using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Get workspace ID
-workspace_id = workspace.id
+# Open a file
+lsp.did_open("/workspace/project/main.py")
 
-# Get workspace root directory
+# Work with the file...
 
-root_dir = workspace.get_workspace_root_dir()
-
-```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Get workspace ID
-const workspaceId = workspace.id;
-
-// Get workspace root directory
-const rootDir = await workspace.getWorkspaceRootDir();
+# Close the file when done
+lsp.did_close("/workspace/project/main.py")
 ```
 
-</TabItem>
-</Tabs>
+### Code Completion
 
-## Remove Workspace
+Get code completion suggestions.
 
-Daytona SDK provides methods to perform operations on Workspaces, such as removing Workspaces using Python and TypeScript.
-
-<Tabs>
-<TabItem label="Python" icon="seti:python">
 ```python
-# Remove workspace
-daytona.remove(workspace)
+from daytona_sdk.lsp_server import Position
+
+# Get completions at a specific position
+completions = lsp.completions("/workspace/project/main.py", Position(10, 15))
+for item in completions.items:
+    print(f"{item.label}: {item.detail}")
 ```
-</TabItem>
-<TabItem label="TypeScript" icon="seti:typescript">
-```typescript
-// Remove workspace
-await daytona.remove(workspace);
+
+### Document Symbols
+
+Get symbol information from a file.
+
+```python
+symbols = lsp.document_symbols("/workspace/project/main.py")
+for symbol in symbols:
+    print(f"{symbol.kind} {symbol.name}: {symbol.location}")
 ```
-</TabItem>
-</Tabs>
+
+### Sandbox Symbols
+
+Search for symbols across all files.
+
+```python
+# Find all symbols containing "User"
+symbols = lsp.sandbox_symbols("User")
+for symbol in symbols:
+    print(f"{symbol.name} in {symbol.location}")
+```
+
+## Function Index
+
+### Daytona
+- `Daytona()` - Initialize a Daytona client
+- `daytona.create()` - Create a new sandbox
+- `daytona.remove()` - Remove a sandbox
+- `daytona.list()` - List all sandboxes
+- `daytona.get_current_sandbox()` - Get sandbox by ID
+- `daytona.start()` - Start a sandbox
+- `daytona.stop()` - Stop a sandbox
+
+### Sandbox
+- `sandbox.info()` - Get sandbox information
+- `sandbox.start()` - Start the sandbox
+- `sandbox.stop()` - Stop the sandbox
+- `sandbox.get_user_root_dir()` - Get sandbox root directory
+- `sandbox.create_lsp_server()` - Create LSP server
+- `sandbox.set_labels()` - Set sandbox labels
+- `sandbox.set_autostop_interval()` - Set auto-stop interval
+- `sandbox.get_preview_link()` - Get preview URL for port
+- `sandbox.archive()` - Archive the sandbox
+- `sandbox.wait_for_sandbox_start()` - Wait for sandbox to start
+- `sandbox.wait_for_sandbox_stop()` - Wait for sandbox to stop
+
+### FileSystem
+- `sandbox.fs.create_folder()` - Create a directory
+- `sandbox.fs.delete_file()` - Delete a file
+- `sandbox.fs.download_file()` - Download a file
+- `sandbox.fs.find_files()` - Search file contents
+- `sandbox.fs.get_file_info()` - Get file metadata
+- `sandbox.fs.list_files()` - List directory contents
+- `sandbox.fs.move_files()` - Move/rename files
+- `sandbox.fs.replace_in_files()` - Replace text in files
+- `sandbox.fs.search_files()` - Find files by pattern
+- `sandbox.fs.set_file_permissions()` - Set file permissions
+- `sandbox.fs.upload_file()` - Upload a file
+
+### Git
+- `sandbox.git.add()` - Stage files
+- `sandbox.git.branches()` - List branches
+- `sandbox.git.clone()` - Clone repository
+- `sandbox.git.commit()` - Commit changes
+- `sandbox.git.push()` - Push changes
+- `sandbox.git.pull()` - Pull changes
+- `sandbox.git.status()` - Get repository status
+
+### Process
+- `sandbox.process.exec()` - Execute shell command
+- `sandbox.process.code_run()` - Run code
+- `sandbox.process.create_session()` - Create interactive session
+- `sandbox.process.delete_session()` - Delete session
+- `sandbox.process.execute_session_command()` - Run command in session
+- `sandbox.process.get_session()` - Get session information
+- `sandbox.process.get_session_command()` - Get command information
+- `sandbox.process.get_session_command_logs()` - Get command output
+- `sandbox.process.list_sessions()` - List all sessions
+
+### LSP Server
+- `lsp.start()` - Start LSP server
+- `lsp.stop()` - Stop LSP server
+- `lsp.did_open()` - Open a file
+- `lsp.did_close()` - Close a file
+- `lsp.document_symbols()` - Get file symbols
+- `lsp.sandbox_symbols()` - Search all symbols
+- `lsp.completions()` - Get code completions
