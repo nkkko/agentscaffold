@@ -1,6 +1,6 @@
 # AgentScaffold
 
-A framework for scaffolding AI agents using PydanticAI, a Python agent framework, and Daytona, AI agent runtime.
+A framework for scaffolding AI agents with modularity and flexibility. It focuses on providing a standardized way to scaffold and compose agents using popular providers for LLMs, search, memory, logging, and MCP (Model Context Protocol).
 
 ## Installation
 
@@ -14,13 +14,14 @@ pip install agentscaffold
 uv pip install agentscaffold
 ```
 
-## Usage
+## Quick Start
 
 Create a new agent:
 
 ```bash
 # Using the full command
 agentscaffold new my-agent
+cd my-agent
 ```
 
 Run an agent:
@@ -29,14 +30,57 @@ Run an agent:
 # Run agent in Daytona remote sandbox
 agentscaffold run
 
-# Run locally without Daytona
-agentscaffold run --local
-
 # Run with a custom message
 agentscaffold run --message "Hello, agent!"
 
 # Using the alias
 as run
+```
+
+## MCP Integration
+
+AgentScaffold supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), making it easy to integrate with tools like Claude Code and other MCP servers.
+
+Add a command-based MCP server:
+
+```bash
+# Add a stdio-based MCP server
+agentscaffold mcp add daytona "python -m daytona_server" -e API_KEY=your_api_key
+```
+
+Add an HTTP-based MCP server:
+
+```bash
+# Add an HTTP-based MCP server
+agentscaffold mcp add-http claude-code https://claude.ai/api/claude-code --api-key your_api_key
+```
+
+List configured servers:
+
+```bash
+# List all MCP servers across all scopes
+agentscaffold mcp list
+```
+
+Get details about a specific server:
+
+```bash
+# Get details about a specific server
+agentscaffold mcp get daytona
+```
+
+Test a server connection:
+
+```bash
+# Test connectivity to an MCP server
+agentscaffold mcp test claude-code
+```
+
+Remove a server:
+
+```bash
+# Remove an MCP server
+agentscaffold mcp remove daytona
 ```
 
 ## Configuring Daytona
@@ -57,11 +101,13 @@ AgentScaffold uses the Daytona SDK for remote execution of AI agents. You'll nee
 
 ## Features
 
-- PydanticAI a Python agent framework designed to build production grade applications with Generative AI
-- Daytona as generative AI agent and workflow execution runtime
-- UV an extremely fast Python package and project manager
-- Command-line interface for easy agent scaffolding
-- Remote execution in isolated Daytona workspaces
+- **PydanticAI**: Python agent framework designed to build production-grade AI applications
+- **Daytona**: Secure AI agent and workflow execution runtime
+- **Provider Flexibility**: Support for various LLM, search, memory, and logging providers
+- **MCP Integration**: Full support for the Model Context Protocol
+- **UV Integration**: Ultra-fast Python package and virtual environment management
+- **Command-line interface**: Easy agent scaffolding and management
+- **Remote execution**: Isolated Daytona workspaces for secure agent execution
 
 ## Project Structure
 
