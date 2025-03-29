@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 # MCP configuration is per-agent, stored in the agent's directory
-MCP_CONFIG_FILE = "mcp_servers.json"
+MCP_CONFIG_FILE = ".mcp.json"
 
 def load_mcp_servers(agent_dir: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
     """
@@ -28,7 +28,8 @@ def load_mcp_servers(agent_dir: Optional[str] = None) -> Dict[str, Dict[str, Any
     
     try:
         with open(config_path, 'r') as f:
-            return json.load(f)
+            config = json.load(f)
+            return config.get("mcpServers", {})
     except json.JSONDecodeError:
         return {}
 
@@ -45,5 +46,18 @@ def save_mcp_servers(servers: Dict[str, Dict[str, Any]], agent_dir: Optional[str
         
     config_path = os.path.join(agent_dir, MCP_CONFIG_FILE)
     
+    # Check if file exists to preserve any other settings
+    config = {"mcpServers": servers}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                existing_config = json.load(f)
+                # Preserve other keys, only update mcpServers
+                for key, value in existing_config.items():
+                    if key != "mcpServers":
+                        config[key] = value
+        except json.JSONDecodeError:
+            pass
+    
     with open(config_path, 'w') as f:
-        json.dump(servers, f, indent=2)
+        json.dump(config, f, indent=2)

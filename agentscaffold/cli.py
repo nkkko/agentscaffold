@@ -444,18 +444,29 @@ def mcp():
 @mcp.command("add")
 def mcp_add(
     name: Annotated[str, typer.Argument(help="Unique name for the MCP server")],
-    url: Annotated[str, typer.Argument(help="URL of the MCP server")],
+    url: Annotated[Optional[str], typer.Option("--url", "-u", help="URL of the MCP server")] = None,
     api_key: Annotated[Optional[str], typer.Option(help="API key for the MCP server")] = None,
     auth_type: Annotated[str, typer.Option(help="Authentication type (api_key, oauth, none)")] = "api_key",
     capability: Annotated[List[str], typer.Option("--capability", "-c", help="Server capabilities (tools, resources, prompts)")] = ["tools"],
+    command: Annotated[Optional[str], typer.Option("--command", help="Command to run for local MCP server")] = None,
+    args: Annotated[Optional[List[str]], typer.Option("--arg", help="Arguments for command (repeatable)")] = None,
+    env_var: Annotated[Optional[List[str]], typer.Option("--env", help="Environment variables in KEY=VALUE format (repeatable)")] = None,
+    server_type: Annotated[str, typer.Option("--type", help="Server type (http, stdio)")] = "http",
 ):
     """
     Add a new MCP server configuration to the current agent.
     This command must be run from inside an agent directory.
+    
+    Examples:
+    
+    Add a remote HTTP server:
+    $ agentscaffold mcp add claude-code --url https://claude.ai/api/claude-code --api-key my-api-key
+    
+    Add a local server that runs via command:
+    $ agentscaffold mcp add local-server --type stdio --command python --arg server.py --env API_KEY=secret
     """
     try:
         from agentscaffold.providers.mcp import load_mcp_servers, save_mcp_servers
-        from agentscaffold.providers.mcp.base import MCPServer
     except ImportError:
         typer.echo("Error: MCP provider module not found.")
         raise typer.Exit(1)
@@ -474,28 +485,81 @@ def mcp_add(
         if not typer.confirm(f"MCP server '{name}' already exists. Override?"):
             raise typer.Exit(1)
     
-    # Create and save the new server
-    server = MCPServer(
-        name=name, 
-        url=url, 
-        api_key=api_key, 
-        auth_type=auth_type, 
-        capabilities=capability
-    )
+    # Create server configuration based on type
+    server_config = {}
     
-    servers[name] = server.to_dict()
+    if server_type == "stdio":
+        # Command-based server
+        if not command:
+            typer.echo("Error: --command is required for stdio server type.")
+            raise typer.Exit(1)
+            
+        server_config = {
+            "type": "stdio",
+            "command": command
+        }
+        
+        if args:
+            server_config["args"] = args
+            
+        if env_var:
+            env_dict = {}
+            for env in env_var:
+                if "=" in env:
+                    key, value = env.split("=", 1)
+                    env_dict[key] = value
+                else:
+                    typer.echo(f"Warning: Skipping invalid environment variable format: {env}")
+            
+            if env_dict:
+                server_config["env"] = env_dict
+                
+    else:  # http
+        # HTTP server
+        if not url:
+            typer.echo("Error: --url is required for http server type.")
+            raise typer.Exit(1)
+            
+        server_config = {
+            "type": "http",
+            "url": url
+        }
+        
+        if api_key:
+            if auth_type == "api_key":
+                server_config["apiKey"] = api_key
+            elif auth_type == "bearer":
+                server_config["bearer"] = api_key
+                
+        if capability:
+            server_config["capabilities"] = capability
+    
+    # Save the server configuration
+    servers[name] = server_config
     save_mcp_servers(servers)
     
+    # Display summary
     typer.echo(f"✅ Added MCP server '{typer.style(name, fg=typer.colors.CYAN)}'")
-    typer.echo(f"   URL: {url}")
-    typer.echo(f"   Capabilities: {', '.join(capability)}")
     
-    # Check if httpx is installed for connectivity
-    try:
-        import httpx
-    except ImportError:
-        typer.echo("\n⚠️ Warning: httpx package is required for MCP connectivity.")
-        typer.echo("   Install with: pip install httpx")
+    if server_type == "stdio":
+        typer.echo(f"   Type: Command-based (stdio)")
+        typer.echo(f"   Command: {command}")
+        if args:
+            typer.echo(f"   Arguments: {' '.join(args)}")
+        if env_var:
+            typer.echo(f"   Environment Variables: {len(env_var)} defined")
+    else:
+        typer.echo(f"   Type: HTTP")
+        typer.echo(f"   URL: {url}")
+        typer.echo(f"   Capabilities: {', '.join(capability)}")
+        
+    # Check if httpx is installed for HTTP connectivity
+    if server_type == "http":
+        try:
+            import httpx
+        except ImportError:
+            typer.echo("\n⚠️ Warning: httpx package is required for HTTP MCP connectivity.")
+            typer.echo("   Install with: pip install httpx")
 
 
 @mcp.command("list")

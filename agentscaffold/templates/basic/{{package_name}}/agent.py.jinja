@@ -694,8 +694,17 @@ class Agent(BaseAgent):
             # Initialize clients for each server
             for name, server_config in mcp_servers.items():
                 try:
-                    self.mcp_clients[name] = MCPClient(server_config)
+                    # Pass the server name to the client constructor
+                    self.mcp_clients[name] = MCPClient(server_config, name=name)
                     print(f"✅ Initialized MCP client for server: {name}")
+                    
+                    # Log server type
+                    server_type = server_config.get("type", "http")
+                    if server_type == "http":
+                        print(f"   Type: HTTP, URL: {server_config.get('url', 'N/A')}")
+                    elif server_type == "stdio":
+                        print(f"   Type: Process-based (stdio), Command: {server_config.get('command', 'N/A')}")
+                        
                 except Exception as e:
                     print(f"❌ Failed to initialize MCP client for {name}: {e}")
             
