@@ -2,28 +2,213 @@
 
 import asyncio
 import inspect
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Dict, Any, List, Optional, Callable, Type, ClassVar, Union
+import logging
 import json
 import os
-import importlib.util
-import sys
-import re
+from typing import Dict, Any, List, Optional, Union, ClassVar, Type
 from pathlib import Path
+
+# Import Pydantic
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class AgentInput(BaseModel):
     """Base class for agent inputs."""
-    
     message: str = Field(..., description="Input message for the agent")
     context: Dict[str, Any] = Field(default_factory=dict, description="Additional context")
 
 
 class AgentOutput(BaseModel):
     """Base class for agent outputs."""
-    
     response: str = Field(..., description="Response from the agent")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+
+
+class BaseAgent:
+    """Base agent class that all scaffolded agents inherit from."""
+    
+    def __init__(
+        self,
+        name: str = "Base Agent",
+        template_dir: str = "flask",
+        description: str = "A base agent with minimal functionality",
+        **kwargs
+    ):
+        """
+        Initialize the base agent.
+        
+        Args:
+            name: Name of the agent
+            description: Description of the agent
+            **kwargs: Additional configuration options
+        """
+        self.name = name
+        self.description = description
+        self.config = kwargs
+        self.template_dir = template_dir  # Store the template_dir as instance variable
+        
+        # Setup logging
+        if not hasattr(self, 'logger'):
+            self.logger = logging.getLogger(f"agent.{self.__class__.__name__}")
+            self.logger.setLevel(logging.INFO)
+            if not self.logger.handlers:
+                handler = logging.StreamHandler()
+                formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+                handler.setFormatter(formatter)
+                self.logger.addHandler(handler)
+        
+        # Initialize providers
+        self.llm_provider = self._init_llm()
+        self.search_provider = self._init_search()
+        self.memory_provider = self._init_memory()
+        self.logging_provider = self._init_logging()
+        self.mcp_provider = self._init_mcp()
+        
+        # Set input and output classes
+        self.input_class = AgentInput
+        self.output_class = AgentOutput
+        
+        # Set runtime configuration
+        self.silent_mode = False
+        
+        # Initialize DaytonaRuntime
+        self._runtime = DaytonaRuntime()
+        
+        self.logger.info(f"Initialized {self.__class__.__name__} agent")
+    
+    def set_silent_mode(self, silent: bool = True):
+        """Set the agent to silent mode."""
+        self.silent_mode = silent
+        if hasattr(self, "_runtime") and hasattr(self._runtime, "set_silent_mode"):
+            self._runtime.set_silent_mode(silent)
+        
+    def _init_llm(self):
+        """Initialize LLM provider."""
+        self.logger.info("No default LLM provider")
+        return None
+    
+    def _init_search(self):
+        """Initialize search provider."""
+        self.logger.info("No default search provider")
+        return None
+    
+    def _init_memory(self):
+        """Initialize memory provider."""
+        self.logger.info("No default memory provider")
+        return None
+    
+    def _init_logging(self):
+        """Initialize logging provider."""
+        self.logger.info("No default logging provider")
+        return None
+    
+    def _init_mcp(self):
+        """Initialize MCP provider."""
+        self.logger.info("No default MCP provider")
+        return None
+    
+    @property
+    def runtime(self):
+        """Get the DaytonaRuntime instance."""
+        return self._runtime
+
+    
+    def get_flask_templates_path(self, template_name=None):
+        """
+        Get path to Flask template files.
+        
+        Args:
+            template_name: Optional specific template name
+            
+        Returns:
+            Path to template directory or specific template file
+        """
+        from pathlib import Path
+        
+        template_dir = Path(__file__).parent / "templates" / "flask"
+        
+        if template_name:
+            return template_dir / template_name
+        
+        return template_dir  
+    async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Run the agent with the given input.
+        
+        Args:
+            input_data: Input data (message and optional context)
+            
+        Returns:
+            Agent response with metadata
+        """
+        if isinstance(input_data, str):
+            input_data = {"message": input_data}
+            
+        if isinstance(input_data, dict) and input_data.get('message', '').lower().strip() in ['exit', 'quit', 'bye']:
+            self.logger.info("Received exit command, cleaning up resources...")
+            if hasattr(self, "_runtime") and hasattr(self._runtime, "_cleanup_workspace"):
+                self._runtime._cleanup_workspace()
+            return {"response": "Session ended. All resources have been cleaned up.", "metadata": {"exited": True}}
+        
+        if not isinstance(input_data, dict):
+            self.logger.error(f"Invalid input type: {type(input_data)}")
+            return {"response": "Error: Invalid input type", "metadata": {"error": True}}
+        
+        if "message" not in input_data:
+            self.logger.error("No message in input")
+            return {"response": "Error: No message provided", "metadata": {"error": True}}
+        
+        try:
+            import time
+            start_time = time.time()
+            self.logger.info("Running agent in Daytona environment")
+            try:
+                agent_module = inspect.getmodule(self.__class__)
+                if agent_module is None:
+                    raise RuntimeError("Cannot determine agent module")
+                agent_file = agent_module.__file__
+                if agent_file is None:
+                    raise RuntimeError("Cannot determine agent file path")
+                agent_dir = os.path.dirname(os.path.abspath(agent_file))
+                self.logger.info(f"Using agent directory: {agent_dir}")
+                result = await self._runtime.execute(agent_dir, input_data)
+                processing_time = time.time() - start_time
+                if isinstance(result, dict) and "metadata" in result:
+                    result["metadata"]["processing_time"] = processing_time
+                return result
+            except Exception as e:
+                self.logger.error(f"❌ Daytona execution error: {e}")
+                self.logger.info("Falling back to local execution due to Daytona error")
+                result = await self.process(input_data)
+                processing_time = time.time() - start_time
+                if isinstance(result, dict) and "metadata" in result:
+                    result["metadata"]["processing_time"] = processing_time
+                return result
+        except Exception as e:
+            self.logger.error(f"Error in run: {e}", exc_info=True)
+            return {"response": f"Error: {str(e)}", "metadata": {"error": True}}
+    
+    async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Fallback local processing."""
+        message = input_data.get("message", "")
+        return {"response": f"Received: {message}", "metadata": {"default": True}}
+    
+    async def search(self, query: str) -> List[Dict[str, Any]]:
+        self.logger.info(f"Default search for: {query}")
+        return []
+    
+    async def remember(self, query: str = "") -> str:
+        self.logger.info(f"Default memory retrieval for: {query}")
+        return ""
+    
+    async def store_memory(self, data: Dict[str, Any]) -> bool:
+        self.logger.info("Default memory storage")
+        return False
+    
+    async def log_event(self, event_type: str, data: Dict[str, Any]) -> bool:
+        self.logger.info(f"Default logging for event: {event_type}")
+        return False
+
 
 class DaytonaRuntime:
     """Daytona runtime for agent execution with persistent workspace and search capabilities."""
@@ -39,44 +224,31 @@ class DaytonaRuntime:
         self._api_keys = {}
         self.silent_mode = False
         
-        # Load environment variables first
         self._load_env_vars()
-        
-        # Verify Daytona configuration with better error handling
         if not os.environ.get("DAYTONA_API_KEY"):
             print("⚠️ DAYTONA_API_KEY environment variable is required")
         else:
             print(f"✅ Loaded .env (DAYTONA_API_KEY=***{os.environ.get('DAYTONA_API_KEY')[-4:] if len(os.environ.get('DAYTONA_API_KEY', '')) > 4 else ''})")
-        
-        if not os.environ.get("DAYTONA_SERVER_URL"):
-            print("⚠️ DAYTONA_SERVER_URL environment variable is required")
-        
-        # Collect API keys for services
+        if not os.environ.get("DAYTONA_API_URL"):
+            print("⚠️ DAYTONA_API_URL environment variable is required")
         self._collect_api_keys()
-        
-        # Initialize Daytona SDK
         self._load_daytona_sdk()
         
     def set_silent_mode(self, silent: bool = True):
-        """Set the runtime to silent mode."""
         self.silent_mode = silent
 
     def _print(self, message: str, end="\n", flush=False):
-        """Print only if not in silent mode."""
         if not self.silent_mode:
             print(message, end=end, flush=flush)
     
     def _load_env_vars(self):
-        """Load environment variables from .env file."""
         try:
             from dotenv import load_dotenv
-            # Try loading from multiple locations
             for env_path in ['.env', '../.env']:
                 if os.path.exists(env_path):
                     load_dotenv(env_path)
                     break
         except ImportError:
-            # Try manual loading if dotenv is not available
             for env_path in ['.env', '../.env']:
                 if os.path.exists(env_path):
                     with open(env_path, 'r') as f:
@@ -86,123 +258,80 @@ class DaytonaRuntime:
                                 os.environ[key.strip()] = value.strip()
     
     def _collect_api_keys(self):
-        """Collect API keys for services."""
-        # OpenAI API key
         openai_api_key = os.environ.get("OPENAI_API_KEY")
         if openai_api_key:
             self._api_keys["OPENAI_API_KEY"] = openai_api_key
             print(f"✅ Found OpenAI API key (length: {len(openai_api_key)})")
-        
-        # Anthropic API key
         anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
         if anthropic_api_key:
             self._api_keys["ANTHROPIC_API_KEY"] = anthropic_api_key
             print(f"✅ Found Anthropic API key (length: {len(anthropic_api_key)})")
-        
-        # Brave Search API key
         brave_api_key = os.environ.get("BRAVE_API_KEY")
         if brave_api_key:
             self._api_keys["BRAVE_API_KEY"] = brave_api_key
             print(f"✅ Found Brave Search API key (length: {len(brave_api_key)})")
-        
-        # LogFire API key
         logfire_api_key = os.environ.get("LOGFIRE_API_KEY")
         if logfire_api_key:
             self._api_keys["LOGFIRE_API_KEY"] = logfire_api_key
             print(f"✅ Found LogFire API key (length: {len(logfire_api_key)})")
     
     def _load_daytona_sdk(self):
-        """Load and verify Daytona SDK with better error handling."""
         try:
             from daytona_sdk import Daytona, CreateWorkspaceParams, DaytonaConfig
-            
-            # Configure from environment with fallbacks
             api_key = os.environ.get("DAYTONA_API_KEY", self.config.get("api_key"))
-            server_url = os.environ.get("DAYTONA_SERVER_URL", self.config.get("server_url"))
+            server_url = os.environ.get("DAYTONA_API_URL", self.config.get("server_url"))
             target = os.environ.get("DAYTONA_TARGET", self.config.get("target", "us"))
-            
             if not api_key:
                 print("❌ No Daytona API key found")
                 return
-                
-            daytona_config = DaytonaConfig(
-                api_key=api_key,
-                server_url=server_url,
-                target=target
-            )
-            
+            daytona_config = DaytonaConfig(api_key=api_key, server_url=server_url, target=target)
             self._daytona = Daytona(daytona_config)
             self._CreateWorkspaceParams = CreateWorkspaceParams
-            
         except ImportError as e:
             print(f"❌ daytona-sdk package not installed: {e}")
         except Exception as e:
             print(f"❌ Daytona initialization failed: {e}")
     
     def _init_workspace(self, agent_dir: str) -> bool:
-        """Initialize workspace if not already initialized."""
         if self.workspace is not None:
             print("🔄 Reusing existing workspace")
             return True
-            
         if not self._daytona:
             print("❌ Daytona SDK not initialized")
             return False
-            
         try:
             params = self._CreateWorkspaceParams(language="python")
             self.workspace = self._daytona.create(params)
             print(f"🔧 Workspace ID: {self.workspace.id}")
-            
-            # Generate a conversation ID if not already set
             if not self._conversation_id:
                 import uuid
                 self._conversation_id = str(uuid.uuid4())
                 print(f"🆕 New conversation ID: {self._conversation_id}")
-            
             return True
         except Exception as e:
             print(f"❌ Error creating workspace: {e}")
             return False
     
     def _upload_agent_code(self, agent_dir: str) -> None:
-        """Upload agent code to the Daytona workspace if not already uploaded."""
         if self._is_initialized and self._agent_dir == agent_dir:
             print("🔄 Reusing existing code upload")
             return
-
         self._agent_dir = agent_dir
-        
         try:
-            # Create the agent directory first
             self.workspace.process.exec("mkdir -p /home/daytona/agent")
-            
-            # Upload the code
-            from pathlib import Path
-            
-            # Upload .env file with API keys
             print("Creating .env file with API keys...")
             env_content = ""
             for key, value in self._api_keys.items():
                 env_content += f"{key}={value}\n"
-            
             self.workspace.fs.upload_file("/home/daytona/agent/.env", env_content.encode('utf-8'))
             print("Successfully uploaded .env file with API keys")
-            
-            # We don't need to upload extra files, the execute method will
-            # run our self-contained script
-            
             self._is_initialized = True
-            
         except Exception as e:
             print(f"Error uploading agent code: {e}")
-   
     
     def _cleanup_workspace(self):
-        """Clean up the workspace when done."""
         if not self.workspace:
             return
-            
         try:
             print("🧹 Cleaning up workspace...")
             self._daytona.remove(self.workspace)
@@ -210,20 +339,49 @@ class DaytonaRuntime:
             self._is_initialized = False
         except Exception as e:
             print(f"❌ Error cleaning up workspace: {e}")
+            
+    def _get_persistent_conversation_id(self, agent_dir: str) -> str:
+        """Get a persistent conversation ID across sessions."""
+        # Use a file to store the conversation ID
+        conversation_file = os.path.join(agent_dir, ".conversation_id")
+        
+        if os.path.exists(conversation_file):
+            try:
+                with open(conversation_file, 'r') as f:
+                    conversation_id = f.read().strip()
+                    if conversation_id:
+                        print(f"🔄 Using existing conversation ID: {conversation_id}")
+                        return conversation_id
+            except Exception as e:
+                print(f"Error reading conversation ID: {e}")
+        
+        # If no existing conversation ID, generate a new one
+        import uuid
+        conversation_id = str(uuid.uuid4())
+        try:
+            with open(conversation_file, 'w') as f:
+                f.write(conversation_id)
+            print(f"🆕 Created new conversation ID: {conversation_id}")
+        except Exception as e:
+            print(f"Error saving conversation ID: {e}")
+        
+        return conversation_id
+    
     def _prepare_execution_code(self, input_base64, conversation_id):
-        """Generate optimized execution code with memory and logging capabilities."""
+        """
+        Generate optimized execution code with memory, logging, and MCP capabilities.
+        This code is uploaded and executed in the Daytona workspace.
+        """
         return f"""
 import sys, os, json, base64, traceback, asyncio
 from typing import Dict, Any, Optional, List
-import time
-import uuid
+import time, uuid, urllib.request, urllib.parse
 
-# Check if directory exists before changing to it
+# Ensure agent directory exists
 if not os.path.exists('/home/daytona/agent'):
     print("Creating agent directory...")
     os.makedirs('/home/daytona/agent', exist_ok=True)
 
-# Setup paths
 sys.path.append('/home/daytona/agent')
 sys.path.append('/home/daytona')
 os.chdir('/home/daytona/agent')
@@ -237,18 +395,16 @@ try:
     else:
         print("No .env file found in agent directory")
 except ImportError:
-    # Manual env loading
     if os.path.exists('/home/daytona/agent/.env'):
         with open('/home/daytona/agent/.env', 'r') as f:
             for line in f:
                 if line.strip() and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
+                    key, value = line.strip().split('=', 1)
                     os.environ[key.strip()] = value.strip()
         print("✅ Manually loaded environment variables in Daytona")
     else:
         print("No .env file found in agent directory")
 
-# List directory contents for debugging
 print("Current directory contents:")
 try:
     print(os.listdir('.'))
@@ -259,32 +415,28 @@ except Exception as e:
 openai_api_key = os.environ.get("OPENAI_API_KEY")
 if openai_api_key:
     print(f"Found OpenAI API key in Daytona (length: {{len(openai_api_key)}})")
-
 brave_api_key = os.environ.get("BRAVE_API_KEY")
 if brave_api_key:
     print(f"Found Brave API key in Daytona (length: {{len(brave_api_key)}})")
-
 logfire_api_key = os.environ.get("LOGFIRE_API_KEY")
 if logfire_api_key:
     print(f"Found LogFire API key in Daytona (length: {{len(logfire_api_key)}})")
+anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+if anthropic_api_key:
+    print(f"Found Anthropic API key in Daytona (length: {{len(anthropic_api_key)}})")
 
-# Conversation ID for persistent memory
 CONVERSATION_ID = "{conversation_id}"
 print(f"🔄 Processing message in conversation: {{CONVERSATION_ID}}")
 
-# Parse the input data
 input_base64 = "{input_base64}"
 input_json = base64.b64decode(input_base64).decode('utf-8')
 input_data = json.loads(input_json)
 message = input_data.get('message', '')
 print(f"📩 Received message: '{{message}}'")
 
-
 # --- MEMORY IMPLEMENTATION ---
-# Simple in-memory storage for this session
 conversation_history = []
 
-# Function to read conversation history from a file
 def read_conversation_history():
     history_file = '/home/daytona/agent/conversation_history.json'
     if os.path.exists(history_file):
@@ -295,7 +447,6 @@ def read_conversation_history():
             print(f"Error reading conversation history: {{e}}")
     return []
 
-# Function to save conversation history to a file
 def save_conversation_history(history):
     history_file = '/home/daytona/agent/conversation_history.json'
     try:
@@ -305,11 +456,9 @@ def save_conversation_history(history):
     except Exception as e:
         print(f"Error saving conversation history: {{e}}")
 
-# Load conversation history
 conversation_history = read_conversation_history()
 print(f"Loaded {{len(conversation_history)}} conversation entries from history")
 
-# Function to add a memory entry
 def add_to_memory(text, metadata=None):
     metadata = metadata or {{}}
     entry = {{
@@ -322,115 +471,521 @@ def add_to_memory(text, metadata=None):
     save_conversation_history(conversation_history)
     return entry["id"]
 
-# Function to retrieve context from memory
 def get_context(query, n_results=3):
     if not conversation_history:
         return ""
-    
-    # Simple keyword matching (in a real implementation, use embeddings)
     relevant = []
     for entry in conversation_history:
         if query.lower() in entry['text'].lower():
             relevant.append(entry)
-    
-    # Sort by recency if there are no keyword matches
     if not relevant:
-        # Get most recent entries
         relevant = sorted(conversation_history, key=lambda x: x.get('timestamp', 0), reverse=True)[:n_results]
     else:
-        # Limit to n_results
         relevant = relevant[:n_results]
-    
-    # Format as string
     if relevant:
         return "\\n\\n".join([f"Memory {{i+1}}:\\n{{m['text']}}" for i, m in enumerate(relevant)])
     return ""
 
-# --- LOGGING IMPLEMENTATION ---
-def log_event(event_type, data):
-    "\"\"\"Log an event to a file and try LogFire if available.\"\"\"
-    log_entry = {{
-        "event_type": event_type,
-        "timestamp": time.time(),
-        "conversation_id": CONVERSATION_ID,
-        "data": data
-    }}
+# --- MCP IMPLEMENTATION ---
+def invoke_mcp(server_id, input_data):
+    print(f"Invoking MCP server: {{server_id}}")
     
-    # Log to file
-    log_file = '/home/daytona/agent/agent_log.jsonl'
+    if server_id == "brave-search" or "search" in server_id:
+        return invoke_brave_search(input_data.get("query", ""))
+    elif server_id == "chroma-memory" or "memory" in server_id:
+        operation = input_data.get("operation", "retrieve")
+        if operation == "store":
+            data = input_data.get("data", {{}})
+            return store_in_memory(data)
+        else:
+            query = input_data.get("query", "")
+            return retrieve_from_memory(query)
+    elif server_id == "logfire-logging" or "logging" in server_id:
+        event = input_data.get("event", "custom_event")
+        data = input_data.get("data", {{}})
+        return log_to_logfire(event, data)
+    else:
+        return {{"status": "error", "message": f"Unknown MCP server: {{server_id}}"}}
+
+def invoke_brave_search(query):
+    api_key = os.environ.get("BRAVE_API_KEY")
+    if not api_key:
+         return {{"status": "error", "message": "No Brave API key provided"}}
+         
+    params = urllib.parse.urlencode({{"q": query, "count": 3}})
+    url = f"https://api.search.brave.com/res/v1/web/search?{{params}}"
+    req = urllib.request.Request(url)
+    req.add_header("Accept", "application/json")
+    req.add_header("X-Subscription-Token", api_key)
+    
     try:
-        with open(log_file, 'a') as f:
-            f.write(json.dumps(log_entry) + '\\n')
+         with urllib.request.urlopen(req, timeout=10) as response:
+             data = json.loads(response.read().decode('utf-8'))
+             results = []
+             if "web" in data and "results" in data["web"]:
+                 for result in data["web"]["results"][:3]:
+                     results.append({{
+                         "title": result.get("title", ""),
+                         "url": result.get("url", ""),
+                         "snippet": result.get("description", "")
+                     }})
+             return {{"status": "success", "results": results}}
     except Exception as e:
-        print(f"Error writing to log file: {{e}}")
+         return {{"status": "error", "message": str(e), "results": []}}
+
+def store_in_memory(data):
+    if not isinstance(data, dict):
+        data = {{"content": str(data)}}
     
-    # Try LogFire if available
-    if logfire_api_key:
+    memory_id = data.get("id", f"mem_{{int(time.time())}}")
+    content = data.get("content", str(data))
+    
+    # Store in conversation history
+    memory_entry = f"Memory: {{content}}"
+    add_to_memory(memory_entry, {{"type": "stored_memory", "data": data}})
+    
+    return {{"status": "success", "message": "Stored in memory", "id": memory_id}}
+
+def retrieve_from_memory(query):
+    context = get_context(query)
+    
+    if context:
+        memories = []
+        for entry in conversation_history:
+            if query.lower() in json.dumps(entry).lower():
+                memories.append(entry.get("metadata", {{}}).get("data", {{"content": entry.get("text", "")}}))
+        
+        return {{"status": "success", "results": memories, "context": context}}
+    else:
+        return {{"status": "error", "message": "No relevant memories found", "results": []}}"""
+
+
+
+    async def execute(self, agent_dir: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute agent code in the Daytona workspace.
+        
+        Args:
+            agent_dir: Directory containing agent code
+            input_data: Input data for the agent
+            
+        Returns:
+            Agent response
+        """
+        if not self._daytona:
+            print("❌ Daytona SDK not initialized")
+            return {"response": "Error: Daytona SDK not initialized", "metadata": {"error": True}}
+        
         try:
-            import urllib.request
-            import urllib.parse
-            import urllib.error
+            # Initialize workspace if needed
+            if not self._init_workspace(agent_dir):
+                return {"response": "Error: Failed to initialize workspace", "metadata": {"error": True}}
             
-            url = "https://api.logfire.dev/api/v1/log"
-            headers = {{
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {{logfire_api_key}}"
-            }}
+            # Upload agent code
+            self._upload_agent_code(agent_dir)
             
-            log_data = {{
-                "event": event_type,
-                "conversation_id": CONVERSATION_ID,
-                **data
-            }}
+            # Ensure conversation ID is set
+            if not self._conversation_id:
+                self._conversation_id = self._get_persistent_conversation_id(agent_dir)
             
-            req = urllib.request.Request(
-                url, 
-                data=json.dumps(log_data).encode('utf-8'),
-                headers=headers,
-                method="POST"
-            )
+            # Prepare input data
+            import base64, json
+            input_json = json.dumps(input_data)
+            input_base64 = base64.b64encode(input_json.encode('utf-8')).decode('utf-8')
             
-            with urllib.request.urlopen(req, timeout=5) as response:
-                response_data = response.read().decode('utf-8')
-                print(f"LogFire log successful: {{response_data}}")
+            # Generate execution code
+            execution_code = self._prepare_execution_code(input_base64, self._conversation_id)
+            # 
+            # Execute agent code
+            self._print("🚀 Executing agent in Daytona workspace...")
+            response = self.workspace.process.exec("cd /home/daytona/agent && python3 -c 'import asyncio; from agent import BaseAgent; asyncio.run(BaseAgent().process(input_data))'", 
+                                                  environment=self._api_keys,
+                                                  stdout=True, stderr=True)
+            
+            # # Process response
+            # try:
+            #     response_data = json.loads(response)
+            #     return response_data
+            # except json.JSONDecodeError:
+            #     # If not JSON, return as plain text
+            #     return {"response": response, "metadata": {"raw_response": True}}
+            return response
                 
         except Exception as e:
-            print(f"Error logging to LogFire: {{e}}")
-
-# Log user message
-log_event("user_message", {{"message": message}})
-
-# --- SEARCH IMPLEMENTATION ---
-def perform_search(query, api_key=None):
-    \"\"\"Simple search implementation using only standard library.\"\"\"
-    print(f"Performing search for: {{query}}")
+            import traceback
+            error_traceback = traceback.format_exc()
+            self._print(f"❌ Error executing agent: {e}")
+            self._print(error_traceback)
+            return {"response": f"Error executing agent: {str(e)}", "metadata": {"error": True, "traceback": error_traceback}}
     
-    api_key = api_key or os.environ.get("BRAVE_API_KEY")
+    async def search(self, query: str, provider: str = "brave") -> List[Dict[str, Any]]:
+        """
+        Perform a search using the specified provider.
+        
+        Args:
+            query: Search query
+            provider: Search provider to use (brave, google, etc.)
+            
+        Returns:
+            List of search results
+        """
+        if not self.workspace:
+            self._print("❌ Workspace not initialized")
+            return []
+        
+        try:
+            # Use MCP implementation in workspace
+            search_code = f"""
+import json, os, urllib.request, urllib.parse
+
+def search_with_{provider}(query):
+    api_key = os.environ.get("{provider.upper()}_API_KEY")
     if not api_key:
-        print("No Brave API key available")
-        return [
-            {{"title": f"Result 1 for {{query}}", "url": "https://example.com/1", "snippet": f"This is a sample result for {{query}}"}},
-            {{"title": f"Result 2 for {{query}}", "url": "https://example.com/2", "snippet": f"Another sample result for {{query}}"}},
-        ]
-    
-    try:
-        import urllib.request
-        import urllib.parse
-        import urllib.error
+        return {{"status": "error", "message": "No {provider} API key provided"}}
         
-        # URL encode parameters
-        params = urllib.parse.urlencode({{"q": query, "count": 3}})
+    if "{provider}" == "brave":
+        params = urllib.parse.urlencode({{"q": query, "count": 5}})
         url = f"https://api.search.brave.com/res/v1/web/search?{{params}}"
-        
-        # Create request with headers
         req = urllib.request.Request(url)
         req.add_header("Accept", "application/json")
         req.add_header("X-Subscription-Token", api_key)
-        
-        # Make request
+    else:
+        return {{"status": "error", "message": "Unsupported search provider"}}
+    
+    try:
         with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode('utf-8'))
+            results = []
+            if "web" in data and "results" in data["web"]:
+                for result in data["web"]["results"][:5]:
+                    results.append({{
+                        "title": result.get("title", ""),
+                        "url": result.get("url", ""),
+                        "snippet": result.get("description", "")
+                    }})
+            return {{"status": "success", "results": results}}
+    except Exception as e:
+        return {{"status": "error", "message": str(e), "results": []}}
+
+result = search_with_{provider}("{query}")
+print(json.dumps(result))
+            """
             
+            response = self.workspace.process.exec(f"python3 -c '{search_code}'", 
+                                                  environment=self._api_keys,
+                                                  stdout=True, stderr=True)
+            
+            try:
+                response_data = json.loads(response)
+                if response_data.get("status") == "success":
+                    return response_data.get("results", [])
+                else:
+                    self._print(f"❌ Search error: {response_data.get('message', 'Unknown error')}")
+                    return []
+            except json.JSONDecodeError:
+                self._print(f"❌ Invalid search response: {response}")
+                return []
+                
+        except Exception as e:
+            self._print(f"❌ Error performing search: {e}")
+            return []
+    
+    async def store_memory(self, data: Dict[str, Any]) -> bool:
+        """
+        Store data in agent memory.
+        
+        Args:
+            data: Data to store
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.workspace:
+            self._print("❌ Workspace not initialized")
+            return False
+        
+        try:
+            import json
+            # Convert to JSON string
+            data_json = json.dumps(data)
+            
+            # Use memory implementation in workspace
+            memory_code = f"""
+import json, os, time, uuid
+
+def store_in_memory(data):
+    try:
+        memory_file = '/home/daytona/agent/memory.json'
+        memory_data = []
+        
+        # Load existing memory if present
+        if os.path.exists(memory_file):
+            with open(memory_file, 'r') as f:
+                try:
+                    memory_data = json.load(f)
+                except:
+                    memory_data = []
+        
+        # Prepare entry
+        memory_id = data.get("id", str(uuid.uuid4()))
+        entry = {{
+            "id": memory_id,
+            "timestamp": time.time(),
+            "data": data
+        }}
+        
+        # Add to memory
+        memory_data.append(entry)
+        
+        # Save memory
+        with open(memory_file, 'w') as f:
+            json.dump(memory_data, f)
+            
+        return {{"status": "success", "id": memory_id}}
+    except Exception as e:
+        return {{"status": "error", "message": str(e)}}
+
+# Parse data
+try:
+    data = json.loads('{data_json}')
+except Exception as e:
+    print(json.dumps({{"status": "error", "message": f"Invalid JSON: {{str(e)}}"}}))
+    exit(1)
+    
+result = store_in_memory(data)
+print(json.dumps(result))
+            """
+            
+            response = self.workspace.process.exec(f"python3 -c '{memory_code}'", 
+                                                  environment=self._api_keys,
+                                                  stdout=True, stderr=True)
+            
+            try:
+                response_data = json.loads(response)
+                if response_data.get("status") == "success":
+                    return True
+                else:
+                    self._print(f"❌ Memory storage error: {response_data.get('message', 'Unknown error')}")
+                    return False
+            except json.JSONDecodeError:
+                self._print(f"❌ Invalid memory response: {response}")
+                return False
+                
+        except Exception as e:
+            self._print(f"❌ Error storing memory: {e}")
+            return False
+    
+    async def retrieve_memory(self, query: str = "") -> List[Dict[str, Any]]:
+        """
+        Retrieve data from agent memory.
+        
+        Args:
+            query: Optional query to filter memory
+            
+        Returns:
+            List of memory entries
+        """
+        if not self.workspace:
+            self._print("❌ Workspace not initialized")
+            return []
+        
+        try:
+            # Use memory implementation in workspace
+            memory_code = f"""
+import json, os
+
+def retrieve_from_memory(query=""):
+    try:
+        memory_file = '/home/daytona/agent/memory.json'
+        
+        # Check if memory exists
+        if not os.path.exists(memory_file):
+            return {{"status": "error", "message": "No memory found", "results": []}}
+        
+        # Load memory
+        with open(memory_file, 'r') as f:
+            try:
+                memory_data = json.load(f)
+            except:
+                return {{"status": "error", "message": "Invalid memory format", "results": []}}
+        
+        # Filter by query if provided
+        if query:
+            results = []
+            query_lower = query.lower()
+            for entry in memory_data:
+                entry_json = json.dumps(entry).lower()
+                if query_lower in entry_json:
+                    results.append(entry)
+        else:
+            # Return all memory entries
+            results = memory_data
+            
+        return {{"status": "success", "results": results}}
+    except Exception as e:
+        return {{"status": "error", "message": str(e), "results": []}}
+
+result = retrieve_from_memory("{query}")
+print(json.dumps(result))
+            """
+            
+            response = self.workspace.process.exec(f"python3 -c '{memory_code}'", 
+                                                  stdout=True, stderr=True)
+            
+            try:
+                response_data = json.loads(response)
+                if response_data.get("status") == "success":
+                    return response_data.get("results", [])
+                else:
+                    self._print(f"❌ Memory retrieval error: {response_data.get('message', 'Unknown error')}")
+                    return []
+            except json.JSONDecodeError:
+                self._print(f"❌ Invalid memory response: {response}")
+                return []
+                
+        except Exception as e:
+            self._print(f"❌ Error retrieving memory: {e}")
+            return []
+    
+    async def log_event(self, event_type: str, data: Dict[str, Any]) -> bool:
+        """
+        Log an event using logging provider.
+        
+        Args:
+            event_type: Type of event
+            data: Event data
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.workspace:
+            self._print("❌ Workspace not initialized")
+            return False
+        
+        try:
+            import json
+            # Convert to JSON string
+            data_json = json.dumps(data)
+            
+            # Use logging implementation in workspace
+            logging_code = f"""
+import json, os, time, urllib.request, urllib.parse
+
+def log_to_logfire(event_type, data):
+    api_key = os.environ.get("LOGFIRE_API_KEY")
+    if not api_key:
+        return {{"status": "error", "message": "No LogFire API key provided"}}
+    
+    try:
+        # Prepare log entry
+        log_entry = {{
+            "timestamp": time.time(),
+            "event": event_type,
+            "data": data
+        }}
+        
+        # Log to LogFire API
+        url = "https://in.logfire.dev/ingest"
+        req = urllib.request.Request(url)
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", f"Bearer {{api_key}}")
+        
+        log_data = json.dumps([log_entry]).encode('utf-8')
+        
+        with urllib.request.urlopen(req, log_data, timeout=10) as response:
+            if response.status == 200:
+                return {{"status": "success"}}
+            else:
+                return {{"status": "error", "message": f"LogFire API returned status {{response.status}}"}}
+    except Exception as e:
+        return {{"status": "error", "message": str(e)}}
+
+# Parse data
+try:
+    data = json.loads('{data_json}')
+except Exception as e:
+    print(json.dumps({{"status": "error", "message": f"Invalid JSON: {{str(e)}}"}}))
+    exit(1)
+    
+result = log_to_logfire("{event_type}", data)
+print(json.dumps(result))
+            """
+            
+            response = self.workspace.process.exec(f"python3 -c '{logging_code}'", 
+                                                  environment=self._api_keys,
+                                                  stdout=True, stderr=True)
+            
+            try:
+                response_data = json.loads(response)
+                if response_data.get("status") == "success":
+                    return True
+                else:
+                    self._print(f"❌ Logging error: {response_data.get('message', 'Unknown error')}")
+                    return False
+            except json.JSONDecodeError:
+                self._print(f"❌ Invalid logging response: {response}")
+                return False
+                
+        except Exception as e:
+            self._print(f"❌ Error logging event: {e}")
+            return False
+    
+    async def invoke_mcp(self, server_id: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Invoke an MCP server.
+        
+        Args:
+            server_id: Server ID
+            input_data: Input data for the server
+            
+        Returns:
+            Server response
+        """
+        if not self.workspace:
+            self._print("❌ Workspace not initialized")
+            return {"status": "error", "message": "Workspace not initialized"}
+        
+        try:
+            import json
+            # Convert to JSON string
+            data_json = json.dumps(input_data)
+            
+            # Use MCP implementation in workspace
+            mcp_code = f"""
+import json, os, time, urllib.request, urllib.parse
+
+def invoke_mcp_server(server_id, input_data):
+    if server_id == "brave-search" or "search" in server_id:
+        return invoke_brave_search(input_data.get("query", ""))
+    elif server_id == "chroma-memory" or "memory" in server_id:
+        operation = input_data.get("operation", "retrieve")
+        if operation == "store":
+            data = input_data.get("data", {{}})
+            return store_in_memory(data)
+        else:
+            query = input_data.get("query", "")
+            return retrieve_from_memory(query)
+    elif server_id == "logfire-logging" or "logging" in server_id:
+        event = input_data.get("event", "custom_event")
+        data = input_data.get("data", {{}})
+        return log_to_logfire(event, data)
+    else:
+        return {{"status": "error", "message": f"Unknown MCP server: {{server_id}}"}}
+
+def invoke_brave_search(query):
+    api_key = os.environ.get("BRAVE_API_KEY")
+    if not api_key:
+        return {{"status": "error", "message": "No Brave API key provided"}}
+        
+    params = urllib.parse.urlencode({{"q": query, "count": 3}})
+    url = f"https://api.search.brave.com/res/v1/web/search?{{params}}"
+    req = urllib.request.Request(url)
+    req.add_header("Accept", "application/json")
+    req.add_header("X-Subscription-Token", api_key)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode('utf-8'))
             results = []
             if "web" in data and "results" in data["web"]:
                 for result in data["web"]["results"][:3]:
@@ -439,634 +994,131 @@ def perform_search(query, api_key=None):
                         "url": result.get("url", ""),
                         "snippet": result.get("description", "")
                     }})
-            
-            print(f"Got {{len(results)}} search results for '{{query}}'")
-            return results
+            return {{"status": "success", "results": results}}
     except Exception as e:
-        print(f"Error performing search: {{e}}")
-        return [
-            {{"title": f"Result 1 for {{query}}", "url": "https://example.com/1", "snippet": f"This is a sample result for {{query}}"}},
-            {{"title": f"Result 2 for {{query}}", "url": "https://example.com/2", "snippet": f"Another sample result for {{query}}"}},
-        ]
+        return {{"status": "error", "message": str(e), "results": []}}
 
-# --- MAIN EXECUTION LOGIC ---
-# Check if this is a search request
-search_keywords = ["search", "look up", "find", "google", "information about", "what is", "tell me about"]
-is_search_request = any(keyword in message.lower() for keyword in search_keywords)
-
-# Check if this is a memory request
-memory_keywords = ["remember", "memory", "previous", "recall", "earlier", "before", "last time"]
-is_memory_request = any(keyword in message.lower() for keyword in memory_keywords)
-
-# Try to handle the request
-try:
-    # If it's a search request, perform search directly
-    if is_search_request:
-        search_query = message
-        
-        # Try to extract search query from message
-        for prefix in ["search for", "search", "look up", "find", "tell me about"]:
-            if prefix in message.lower():
-                search_query = message.lower().split(prefix, 1)[1].strip()
-                break
-        
-        print(f"Detected search request: {{search_query}}")
-        results = perform_search(search_query, brave_api_key)
-        
-        # Format the results
-        formatted_results = "\\n".join([f"{{i+1}}. {{r['title']}}\\n   {{r['url']}}\\n   {{r['snippet']}}" for i, r in enumerate(results)])
-        
-        response_text = f"Here's what I found for '{{search_query}}':\\n\\n{{formatted_results}}"
-        
-        # Store in memory
-        add_to_memory(f"User: {{message}}\\nAgent: {{response_text}}", {{"type": "search", "query": search_query}})
-        
-        # Log the search and response
-        log_event("search", {{"query": search_query, "results": results}})
-        log_event("agent_response", {{"response": response_text, "type": "search"}})
-        
-        response = {{
-            "response": response_text,
-            "metadata": {{"search_results": results}}
-        }}
-        
-        print("✅ Direct search successful")
-        print(json.dumps(response))
-        sys.exit(0)  # Exit successfully after processing
-    
-    # If it's a memory request, retrieve and provide context
-    elif is_memory_request:
-        context = get_context(message)
-        
-        if context:
-            response_text = f"Here's what I remember from our previous conversation:\\n\\n{{context}}"
-        else:
-            response_text = "I don't have any relevant memories from our previous conversations yet."
-        
-        # Store this interaction
-        add_to_memory(f"User: {{message}}\\nAgent: {{response_text}}", {{"type": "memory_retrieval"}})
-        
-        # Log the memory retrieval
-        log_event("memory_retrieval", {{"query": message, "found": bool(context)}})
-        log_event("agent_response", {{"response": response_text, "type": "memory"}})
-        
-        response = {{
-            "response": response_text,
-            "metadata": {{"memory_retrieval": True, "conversation_id": CONVERSATION_ID}}
-        }}
-        
-        print("✅ Memory retrieval successful")
-        print(json.dumps(response))
-        sys.exit(0)
-    
-    
-    # For regular messages, use OpenAI to generate a response
-    else:
-        # Get recent context
-        memory_context = get_context("")  # Empty query gets most recent items
-        
-        # Prepare to use OpenAI for response generation
-        try:
-            import openai
-            
-            # Initialize OpenAI client
-            openai.api_key = os.environ.get("OPENAI_API_KEY")
-            if not openai.api_key:
-                raise ValueError("OpenAI API key not found")
-                
-            # Prepare the conversation context for the API - using Python string literals instead of f-strings
-            system_prompt = "You are a helpful AI assistant running in a Daytona environment with search and memory capabilities. Respond naturally to the user's queries based on the conversation history and context provided."
-            messages = [
-                {{"role": "system", "content": system_prompt}}
-            ]
-            
-            # Add conversation history if available
-            if memory_context:
-                context_prompt = "Recent conversation history: " + memory_context
-                messages.append({{"role": "system", "content": context_prompt}})
-            
-            # Add the user's current message
-            messages.append({{"role": "user", "content": message}})
-            
-            # Call the OpenAI API
-            print("Calling OpenAI API for response generation...")
-            
-            try:
-                # Try new client first
-                from openai import OpenAI
-                client = OpenAI(api_key=openai.api_key)
-                response_obj = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=messages,
-                    temperature=0.7,
-                    max_tokens=800
-                )
-                response_text = response_obj.choices[0].message.content
-                print("Used new OpenAI client")
-            except (ImportError, AttributeError):
-                # Fall back to old client
-                response_obj = openai.ChatCompletion.create(
-                    model="gpt-4o",
-                    messages=messages,
-                    temperature=0.7,
-                    max_tokens=800
-                )
-                response_text = response_obj.choices[0].message.content
-                print("Used legacy OpenAI client")
-            
-            # Store this interaction in memory
-            memory_entry = f"User: {{message}}\\nAgent: {{response_text}}"
-            add_to_memory(memory_entry, {{"type": "conversation"}})
-            
-            # Log the OpenAI response
-            log_event("openai_response", {{"message": message, "response": response_text[:200]}})
-            
-            response = {{
-                "response": response_text,
-                "metadata": {{"conversation_id": CONVERSATION_ID, "used_openai": True}}
-            }}
-            
-            print(json.dumps(response))
-            
-        except ImportError as ie:
-            print(f"OpenAI module not available: {{ie}}, trying HTTP implementation...")
-            try:
-                # Alternative using direct HTTP request
-                import urllib.request
-                import urllib.parse
-                
-                url = "https://api.openai.com/v1/chat/completions"
-                api_key = os.environ.get('OPENAI_API_KEY')
-                
-                if not api_key:
-                    raise ValueError("OpenAI API key not found")
-                
-                headers = {{
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {{api_key}}"
-                }}
-                
-                # Prepare messages
-                system_content = "You are a helpful AI assistant running in a Daytona environment with search and memory capabilities."
-                messages = [
-                    {{"role": "system", "content": system_content}}
-                ]
-                
-                # Add context if available
-                if memory_context:
-                    context_content = "Recent conversation history: " + memory_context
-                    messages.append({{"role": "system", "content": context_content}})
-                
-                # Add user message
-                messages.append({{"role": "user", "content": message}})
-                
-                # Prepare the request payload
-                payload = {{
-                    "model": "gpt-4o",
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 800
-                }}
-                
-                encoded_data = json.dumps(payload).encode('utf-8')
-                
-                req = urllib.request.Request(
-                    url,
-                    data=encoded_data,
-                    headers=headers,
-                    method="POST"
-                )
-                
-                with urllib.request.urlopen(req, timeout=15) as response_stream:
-                    api_response = json.loads(response_stream.read().decode('utf-8'))
-                    response_text = api_response["choices"][0]["message"]["content"]
-                    print("Used HTTP request to OpenAI API")
-                    
-                    # Store this interaction in memory
-                    memory_entry = f"User: {{message}}\\nAgent: {{response_text}}"
-                    add_to_memory(memory_entry, {{"type": "conversation"}})
-                    
-                    # Log the OpenAI response
-                    log_event("openai_response", {{"message": message, "response": response_text[:200]}})
-                    
-                    response = {{
-                        "response": response_text,
-                        "metadata": {{"conversation_id": CONVERSATION_ID, "used_openai": True}}
-                    }}
-                    
-                    print(json.dumps(response))
-                    
-            except Exception as api_error:
-                print(f"Error calling OpenAI API via HTTP: {{api_error}}")
-                
-                # Fall back to templated response
-                if memory_context:
-                    response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask about our previous conversation.\\n\\nBased on our conversation history:\\n{{memory_context}}"
-                else:
-                    response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask me to remember our conversation later."
-                
-                # Store this interaction
-                memory_entry = f"User: {{message}}\\nAgent: {{response_text}}"
-                add_to_memory(memory_entry, {{"type": "conversation"}})
-                
-                # Log the regular message
-                log_event("regular_message", {{"message": message}})
-                log_event("agent_response", {{"response": response_text[:200], "type": "regular", "fallback": True}})
-                
-                response = {{
-                    "response": response_text,
-                    "metadata": {{"conversation_id": CONVERSATION_ID, "fallback": True}}
-                }}
-                
-                print(json.dumps(response))
-        
-        except Exception as e:
-            print(f"General error in OpenAI processing: {{e}}")
-            traceback.print_exc()
-            
-            # Fall back to templated response
-            if memory_context:
-                response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask about our previous conversation.\\n\\nBased on our conversation history:\\n{{memory_context}}"
-            else:
-                response_text = f"I received your message: '{{message}}'. I'm running in a persistent Daytona environment with search and memory capabilities. You can ask me to search for information by saying 'search for [topic]' or ask me to remember our conversation later."
-            
-            # Store this interaction
-            memory_entry = f"User: {{message}}\\nAgent: {{response_text}}"
-            add_to_memory(memory_entry, {{"type": "conversation"}})
-            
-            # Log the error and fallback response
-            log_event("error", {{"error": str(e), "traceback": traceback.format_exc()}})
-            log_event("agent_response", {{"response": response_text[:200], "type": "regular", "fallback": True}})
-            
-            response = {{
-                "response": response_text,
-                "metadata": {{"conversation_id": CONVERSATION_ID, "fallback": True}}
-            }}
-            
-            print(json.dumps(response))
-    
-    
-except Exception as e:
-    # Ultimate fallback
-    print(f"❌ Critical error: {{e}}")
-    traceback.print_exc()
-    
-    # Log the error
-    log_event("error", {{"error": str(e), "traceback": traceback.format_exc()}})
-    
-    print(json.dumps({{
-        "response": "I encountered a system error. Please try again later.",
-        "metadata": {{"error": True, "critical": True}}
-    }}))
-"""
-    async def execute(self, agent_dir: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute agent in Daytona workspace with proper directory handling."""
-        # Exit command handling
-        if isinstance(input_data, dict) and input_data.get('message', '').lower().strip() in ['exit', 'quit', 'bye']:
-            print("👋 Received exit command")
-            self._cleanup_workspace()
-            return {
-                "response": "Session ended. All resources have been cleaned up.",
-                "metadata": {"exited": True}
-            }
-            
-        if not self._daytona:
-            return {
-                "response": "Error: Daytona SDK not initialized. Check your API keys and server URL.",
-                "metadata": {"error": True}
-            }
-            
-        print("🚀 Starting Daytona agent...")
-        
-        try:
-            # Initialize or reuse workspace
-            if not self._init_workspace(agent_dir):
-                return {
-                    "response": "Error: Failed to initialize Daytona workspace.",
-                    "metadata": {"error": True}
-                }
-            
-            # Create the agent directory in the workspace
-            try:
-                self.workspace.process.exec("mkdir -p /home/daytona/agent")
-                print("Created agent directory in workspace")
-            except Exception as e:
-                print(f"Error creating agent directory: {e}")
-            
-            # Upload agent code if not already uploaded
-            print("📤 Uploading code to Daytona...")
-            self._upload_agent_code(agent_dir)
-            
-            # Prepare input data
-            import base64
-            input_json = json.dumps(input_data)
-            input_base64 = base64.b64encode(input_json.encode('utf-8')).decode('utf-8')
-            
-            # Prepare and run the execution code
-            print("⚡ Running in Daytona...")
-            exec_code = self._prepare_execution_code(input_base64, self._conversation_id)
-            response = self.workspace.process.code_run(exec_code)
-            
-            # Parse the response
-            if response.exit_code != 0:
-                print(f"❌ Execution failed (exit code {response.exit_code})")
-                return {
-                    "response": f"Error executing agent in Daytona: {response.result}",
-                    "metadata": {"error": True}
-                }
-            
-            # Find JSON in the output
-            lines = response.result.strip().split('\n')
-            for line in reversed(lines):
-                try:
-                    result = json.loads(line)
-                    print("✅ Execution completed successfully")
-                    return result
-                except json.JSONDecodeError:
-                    continue
-            
-            # Fallback if no JSON found
-            return {
-                "response": "Execution completed but no valid response was returned.",
-                "metadata": {"raw_output": response.result}
-            }
-            
-        except Exception as e:
-            print(f"❌ Daytona execution error: {e}")
-            return {
-                "response": f"Error: {str(e)}",
-                "metadata": {"error": True}
-            }
-        finally:
-            # We don't cleanup the workspace here to maintain state between calls
-            pass
-    
-    def cleanup_resources(self):
-        """Clean up all resources when conversation ends."""
-        self._cleanup_workspace()
-
-class BaseAgent(BaseModel):
-    """Minimal base agent implementation."""
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
-    
-    name: str = "MinimalAgent"
-    description: str = ""
-    
-    def __init__(self, **data):
-        super().__init__(**data)
-        self._init_daytona_runtime()
-        # Always force Daytona by default
-        self.force_daytona = os.environ.get("FORCE_DAYTONA", "true").lower() in ["true", "1", "yes"]
-    
-    def _init_daytona_runtime(self):
-        """Initialize Daytona runtime."""
-        self._runtime = DaytonaRuntime()
-            
-    @property
-    def runtime(self):
-        """Get the DaytonaRuntime instance."""
-        return self._runtime
-        
-    async def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Process input data and generate output."""
-        return {"response": f"Processed: {input_data['message']}", "metadata": {}}
-    
-    async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Run the agent with the provided input data."""
-        if isinstance(input_data, str):
-            input_data = {"message": input_data}
-            
-        # Check for exit command
-        if isinstance(input_data, dict) and input_data.get('message', '').lower().strip() in ['exit', 'quit', 'bye']:
-            print("Received exit command, cleaning up resources...")
-            return {
-                "response": "Session ended. All resources have been cleaned up.",
-                "metadata": {"exited": True}
-            }
-            
-        # Check if we should force Daytona execution (from env var or input data)
-        context_force_daytona = input_data.get("context", {}).get("force_daytona")
-        force_daytona = context_force_daytona if context_force_daytona is not None else self.force_daytona
-        
-        # Process the input
-        try:
-            if force_daytona:
-                print("🚀 Starting Daytona execution...")
-                    
-                try:
-                    # Use the Daytona runtime to execute the agent
-                    import os
-                    import inspect
-                    
-                    # Get the module file path where the agent class is defined
-                    agent_module = inspect.getmodule(self.__class__)
-                    if agent_module is None:
-                        raise RuntimeError("Cannot determine agent module")
-                    
-                    agent_file = agent_module.__file__
-                    if agent_file is None:
-                        raise RuntimeError("Cannot determine agent file path")
-                    
-                    agent_dir = os.path.dirname(os.path.abspath(agent_file))
-                    print(f"Using agent directory: {agent_dir}")
-                    
-                    # Execute the agent via Daytona runtime
-                    result = await self._runtime.execute(agent_dir, input_data)
-                    return result
-                except Exception as e:
-                    print(f"❌ Daytona execution error: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    
-                    # Fall back to local execution
-                    print("Falling back to local execution due to Daytona error")
-                    return await self.process(input_data)
-            else:
-                return await self.process(input_data)
-        except Exception as e:
-            print(f"Error running agent: {e}")
-            return {"response": f"Error: {e}", "metadata": {"error": True}}
-class Agent(BaseModel):
-    """Base agent class for AgentScaffold."""
-    
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
-
-    name: str = "BaseAgent"  # Provide a default value for name
-    description: str = ""
-    input_class: ClassVar[Type[AgentInput]] = AgentInput
-    output_class: ClassVar[Type[AgentOutput]] = AgentOutput
-    pydantic_agent: Optional[Any] = None
-    
-    def __init__(self, **data):
-        super().__init__(**data)
-        print("🔒 Initializing with mandatory Daytona execution")
-        self._runtime = DaytonaRuntime()
-        self.silent_mode = False
-
-
-        # Handle missing name field by providing a default
-        if "name" not in data:
-            data["name"] = "BaseAgent"
-            # Ensure environment variables are loaded before anything else
+def store_in_memory(data):
     try:
-        from dotenv import load_dotenv
-        # Load from multiple possible locations - both current dir and parent dir
-        load_dotenv()
-        load_dotenv('../.env')  # Try parent directory too
+        memory_file = '/home/daytona/agent/memory.json'
+        memory_data = []
         
-        # Check if crucial API keys are loaded
-        if os.environ.get('OPENAI_API_KEY'):
-            print(f"Found OPENAI_API_KEY in environment (length: {len(os.environ.get('OPENAI_API_KEY'))})")
-        else:
-            print("WARNING: OPENAI_API_KEY not found in environment variables")
-            
-            # Try to load from .env file directly as a last resort
-            env_files = ['.env', '../.env']
-            for env_file in env_files:
-                if os.path.exists(env_file):
-                    print(f"Found .env file at {env_file}, trying direct loading")
-                    with open(env_file, 'r') as f:
-                        for line in f:
-                            if line.strip() and not line.startswith('#'):
-                                if '=' in line:
-                                    key, value = line.strip().split('=', 1)
-                                    if key.strip() == 'OPENAI_API_KEY' and value.strip():
-                                        os.environ['OPENAI_API_KEY'] = value.strip()
-                                        print(f"Loaded OPENAI_API_KEY directly from {env_file} (length: {len(value.strip())})")
-                                        break
+        # Load existing memory if present
+        if os.path.exists(memory_file):
+            with open(memory_file, 'r') as f:
+                try:
+                    memory_data = json.load(f)
+                except:
+                    memory_data = []
         
-        if os.environ.get('ANTHROPIC_API_KEY'):
-            print(f"Found ANTHROPIC_API_KEY in environment (length: {len(os.environ.get('ANTHROPIC_API_KEY'))})")
-    except ImportError:
-        print("Warning: python-dotenv not installed, trying direct env file parsing")
-        # Try to load API keys manually if dotenv isn't available
-        try:
-            env_files = ['.env', '../.env']
-            for env_file in env_files:
-                if os.path.exists(env_file):
-                    print(f"Found .env file at {env_file}, trying direct loading")
-                    with open(env_file, 'r') as f:
-                        for line in f:
-                            if line.strip() and not line.startswith('#'):
-                                if '=' in line:
-                                    key, value = line.strip().split('=', 1)
-                                    if key.strip() in ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY'] and value.strip():
-                                        os.environ[key.strip()] = value.strip()
-                                        print(f"Loaded {key.strip()} directly from {env_file} (length: {len(value.strip())})")
-        except Exception as e:
-            print(f"Error loading environment variables directly: {e}")
+        # Prepare entry
+        memory_id = data.get("id", f"mem_{{int(time.time())}}")
+        entry = {{
+            "id": memory_id,
+            "timestamp": time.time(),
+            "data": data
+        }}
+        
+        # Add to memory
+        memory_data.append(entry)
+        
+        # Save memory
+        with open(memory_file, 'w') as f:
+            json.dump(memory_data, f)
             
-        super().__init__(**data)
-        self._runtime = DaytonaRuntime()
-        self.force_daytona = os.environ.get('FORCE_DAYTONA', 'false').lower() == 'true'
-        print(f"Agent initialized: {self.name}")
+        return {{"status": "success", "message": "Stored in memory", "id": memory_id}}
+    except Exception as e:
+        return {{"status": "error", "message": str(e)}}
 
-        # Initialize PydanticAgent with robust error handling
-        self.pydantic_agent = None
-        try:
-            # First check if we have an API key before trying to initialize
-            openai_api_key = os.environ.get('OPENAI_API_KEY')
-            if not openai_api_key:
-                print("WARNING: No OPENAI_API_KEY in environment, skipping PydanticAgent initialization")
-            else:
-                from pydantic_ai import PydanticAgent
-                self.pydantic_agent = PydanticAgent(
-                    "openai:gpt-4",
-                    result_type=self.output_class,
-                    system_prompt=(
-                        f"You are {self.name}, an AI assistant designed to help with "
-                        f"{self.description}. Be helpful, concise, and accurate in your responses."
-                    )
-                )
-                print("Successfully initialized PydanticAgent")
-        except Exception as e:
-            print(f"Warning: Error initializing PydanticAgent: {e}")
+def retrieve_from_memory(query=""):
+    try:
+        memory_file = '/home/daytona/agent/memory.json'
+        
+        # Check if memory exists
+        if not os.path.exists(memory_file):
+            return {{"status": "error", "message": "No memory found", "results": []}}
+        
+        # Load memory
+        with open(memory_file, 'r') as f:
             try:
-                # Try alternative approach if original fails
-                from pydantic_ai import PydanticAgent
-                api_key = os.environ.get('OPENAI_API_KEY')
-                if api_key:
-                    print("Trying alternative PydanticAgent initialization with explicit API key")
-                    # Import provider directly to set API key manually
-                    from openai import OpenAI, AsyncOpenAI
-                    client = AsyncOpenAI(api_key=api_key)
-                    
-                    self.pydantic_agent = PydanticAgent(
-                        "gpt-3.5-turbo",  # Fallback to a simpler model
-                        result_type=self.output_class
-                    )
-                    print("Successfully initialized fallback PydanticAgent")
-                else:
-                    print("No OpenAI API key available, agent will work in limited capacity")
-            except Exception as fallback_error:
-                print(f"Warning: Error initializing fallback PydanticAgent: {fallback_error}")
-                self.pydantic_agent = None
-
-
-
-        # Initialize providers
-        # Search provider
-        self.search_provider = None
-        if hasattr(self, '_init_search'):
-            self.search_provider = self._init_search()
+                memory_data = json.load(f)
+            except:
+                return {{"status": "error", "message": "Invalid memory format", "results": []}}
         
-        # Memory provider
-        self.memory_provider = None
-        if hasattr(self, '_init_memory'):
-            self.memory_provider = self._init_memory()
-        
-        # Logging provider
-        self.logging_provider = None
-        if hasattr(self, '_init_logging'):
-            self.logging_provider = self._init_logging()
-
-    def set_silent_mode(self, silent: bool = True):
-        """Set the agent to silent mode."""
-        self.silent_mode = silent
-        # If the agent has a daytona runtime, set its silent mode too
-        if hasattr(self, 'runtime') and hasattr(self.runtime, 'set_silent_mode'):
-            self.runtime.set_silent_mode(silent)
-    @property
-    def runtime(self):
-        """Get the DaytonaRuntime instance."""
-        return self._runtime
-    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process input data and generate output.
-        
-        This method should be overridden by derived agent classes.
-        
-        Args:
-            input_data: Validated input data
+        # Filter by query if provided
+        if query:
+            results = []
+            query_lower = query.lower()
+            for entry in memory_data:
+                entry_json = json.dumps(entry).lower()
+                if query_lower in entry_json:
+                    results.append(entry)
+        else:
+            # Return all memory entries
+            results = memory_data
             
-        Returns:
-            Agent output
-        """
-        # Default implementation just echoes the input
-        return {"response": f"Received: {input_data['message']}", "metadata": {}}
+        return {{"status": "success", "results": results}}
+    except Exception as e:
+        return {{"status": "error", "message": str(e), "results": []}}
+
+def log_to_logfire(event_type, data):
+    api_key = os.environ.get("LOGFIRE_API_KEY")
+    if not api_key:
+        return {{"status": "error", "message": "No LogFire API key provided"}}
     
-    async def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Run agent in Daytona."""
-        print("🚀 Starting Daytona execution...")
+    try:
+        # Prepare log entry
+        log_entry = {{
+            "timestamp": time.time(),
+            "event": event_type,
+            "data": data
+        }}
         
+        # Log to LogFire API or to local file if API not available
         try:
-            agent_dir = os.path.dirname(os.path.abspath(inspect.getfile(self.__class__)))
-            result = await self._runtime.execute(agent_dir, input_data)
-            print("✅ Daytona execution completed")
-            return result
+            url = "https://in.logfire.dev/ingest"
+            req = urllib.request.Request(url)
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Authorization", f"Bearer {{api_key}}")
+            
+            log_data = json.dumps([log_entry]).encode('utf-8')
+            
+            with urllib.request.urlopen(req, log_data, timeout=10) as response:
+                if response.status == 200:
+                    return {{"status": "success"}}
+                else:
+                    raise Exception(f"LogFire API returned status {{response.status}}")
+        except Exception as api_error:
+            # Fallback to local logging
+            log_file = '/home/daytona/agent/agent_logs.jsonl'
+            with open(log_file, 'a') as f:
+                f.write(json.dumps(log_entry) + '\\n')
+            return {{"status": "success", "message": "Logged locally (API error: {{str(api_error)}})"}}
+    except Exception as e:
+        return {{"status": "error", "message": str(e)}}
+
+# Parse data
+try:
+    data = json.loads('{data_json}')
+except Exception as e:
+    print(json.dumps({{"status": "error", "message": f"Invalid JSON: {{str(e)}}"}}))
+    exit(1)
+    
+result = invoke_mcp_server("{server_id}", data)
+print(json.dumps(result))
+            """
+            
+            response = self.workspace.process.exec(f"python3 -c '{mcp_code}'", 
+                                                  environment=self._api_keys,
+                                                  stdout=True, stderr=True)
+            
+            try:
+                response_data = json.loads(response)
+                return response_data
+            except json.JSONDecodeError:
+                self._print(f"❌ Invalid MCP response: {response}")
+                return {"status": "error", "message": "Invalid MCP response"}
+                
         except Exception as e:
-            print(f"❌ Daytona execution failed: {e}")
-            return {
-                "response": f"Daytona execution error: {str(e)}",
-                "metadata": {"error": True}
-            }
-        
-
-
-
-
-
-
-
-
-       
+            self._print(f"❌ Error invoking MCP: {e}")
+            return {"status": "error", "message": str(e)}

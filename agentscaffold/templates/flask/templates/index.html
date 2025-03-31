@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>{{ app_name }}</h1>
+            <p>Self-building Flask application</p>
+        </header>
+        
+        <main>
+            {% if builder and builder.has_generated_app() %}
+                <div class="success-message">
+                    <h2>Application Generated Successfully!</h2>
+                    <p>Your application "{{ builder.get_app_description() }}" is ready.</p>
+                    
+                    <div class="actions">
+                        <form action="/reset" method="post">
+                            <button type="submit" class="btn">Create New App</button>
+                        </form>
+                    </div>
+                </div>
+            {% elif progress %}
+                <div class="generation-container">
+                    <h2>Generating Your Application</h2>
+                    <p>Description: {{ description }}</p>
+                    
+                    <div id="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-indicator"></div>
+                        </div>
+                        <div id="progress-details">
+                            {{ progress|safe }}
+                        </div>
+                    </div>
+                </div>
+                
+                <script>
+                    function checkProgress() {
+                        $.get('/progress', function(data) {
+                            $('#progress-details').html(data.html);
+                            if (data.completed) {
+                                $('.progress-indicator').css('width', '100%');
+                                setTimeout(function() {
+                                    window.location.href = '/app-details';  // Redirect to app details
+                                }, 1000);
+                            } else {
+                                var progressSteps = $('.step').length;
+                                var completedSteps = $('.step.completed').length;
+                                var percentComplete = progressSteps > 0 ? (completedSteps / progressSteps) * 100 : 0;
+                                $('.progress-indicator').css('width', percentComplete + '%');
+                                setTimeout(checkProgress, 1000);
+                                }
+                        });
+                    }
+                    
+                
+                    $(document).ready(function() {
+                    // Only start the progress check if we're on the generation page
+                        if ($('#progress-container').length > 0) {
+                        setTimeout(checkProgress, 1000);
+                        }
+                    });
+                </script>
+            {% else %}
+                <div class="form-container">
+                    <h2>Create Your Flask Application</h2>
+                    <form method="post" action="/">
+                        <div class="form-group">
+                            <label for="description">Application Description:</label>
+                            <textarea id="description" name="description" rows="4" placeholder="Describe your application..."></textarea>
+                        </div>
+                        <div class="form-group">
+                            <button type="submit" class="btn">Generate Application</button>
+                        </div>
+                    </form>
+                </div>
+            {% endif %}
+        </main>
+        
+        <footer>
+            <p>&copy; {{ app_name }} - Built with AgentScaffold</p>
+        </footer>
+    </div>
+</body>
+</html>

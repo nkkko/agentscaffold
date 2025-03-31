@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>{{ app_name }}</h1>
+            <p>Self-building Flask application</p>
+        </header>
+        
+        <main>
+            <div class="app-details">
+                <h2>Generated Application Details</h2>
+                <p class="app-description">{{ app_data.description }}</p>
+                
+                {% if app_data.local and app_data.local.app_dir %}
+                <div class="local-info">
+                    <h3>Local Application Files</h3>
+                    <p><strong>Application Directory:</strong> {{ app_data.local.app_dir }}</p>
+                    
+                    {% if app_data.local.app_zip %}
+                    <p><strong>Download:</strong> <a href="{{ url_for('download') }}" class="btn">Download ZIP Archive</a></p>
+                    {% endif %}
+                </div>
+                {% endif %}
+                
+                {% if app_data.daytona and app_data.daytona.workspace_id %}
+                <div class="daytona-info">
+                    <h3>Daytona Workspace</h3>
+                    <p><strong>Workspace ID:</strong> {{ app_data.daytona.workspace_id }}</p>
+                    
+                    {% if app_data.daytona.app_url %}
+                    <p><strong>Application URL:</strong> <a href="{{ app_data.daytona.app_url }}" target="_blank">{{ app_data.daytona.app_url }}</a></p>
+                    {% endif %}
+                    
+                    <div class="daytona-actions">
+                        <a href="https://app.daytona.io/workspaces/{{ app_data.daytona.workspace_id }}" target="_blank" class="btn">Open in Daytona Dashboard</a>
+                    </div>
+                </div>
+                {% endif %}
+                
+                <div class="app-structure">
+                    <h3>Application Structure</h3>
+                    
+                    {% if app_data.structure %}
+                        <div class="structure-section">
+                            <h4>Routes</h4>
+                            <ul class="structure-list">
+                                {% for route in app_data.structure.routes %}
+                                    <li>{{ route }}</li>
+                                {% else %}
+                                    <li class="empty-item">No routes defined</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        
+                        <div class="structure-section">
+                            <h4>Models</h4>
+                            <ul class="structure-list">
+                                {% for model in app_data.structure.models %}
+                                    <li>{{ model }}</li>
+                                {% else %}
+                                    <li class="empty-item">No models defined</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        
+                        <div class="structure-section">
+                            <h4>Templates</h4>
+                            <ul class="structure-list">
+                                {% for template in app_data.structure.templates %}
+                                    <li>{{ template }}</li>
+                                {% else %}
+                                    <li class="empty-item">No templates defined</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        
+                        <div class="structure-section">
+                            <h4>Components</h4>
+                            <ul class="structure-list">
+                                {% for component in app_data.structure.components %}
+                                    <li>{{ component }}</li>
+                                {% else %}
+                                    <li class="empty-item">No components defined</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    {% else %}
+                        <p class="empty-item">No structure information available</p>
+                    {% endif %}
+                </div>
+                
+                <div class="app-actions">
+                    <form action="{{ url_for('reset') }}" method="post" class="inline-form">
+                        <button type="submit" class="btn btn-secondary">Create New App</button>
+                    </form>
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <p>&copy; {{ app_name }} - Built with AgentScaffold</p>
+        </footer>
+    </div>
+</body>
+</html>

@@ -95,7 +95,7 @@ AgentScaffold uses the Daytona SDK for remote execution of AI agents. You'll nee
 2. Set environment variables in your `.env` file:
    ```
    DAYTONA_API_KEY=your-daytona-api-key
-   DAYTONA_SERVER_URL=your-daytona-server-url
+   DAYTONA_API_URL=your-daytona-server-url
    DAYTONA_TARGET=us
    ```
 

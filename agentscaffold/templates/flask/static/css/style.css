@@ -1,0 +1,337 @@
+/* General Styles */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #f5f7fa;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* Header */
+header {
+    text-align: center;
+    margin-bottom: 30px;
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+header h1 {
+    color: #2c3e50;
+    margin-bottom: 10px;
+}
+
+/* Form Styles */
+.form-container {
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    resize: vertical;
+    font-family: inherit;
+}
+
+.btn {
+    background-color: #3498db;
+    color: white;
+    border: none;
+    padding: 12px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    transition: background-color 0.3s;
+    text-decoration: none;
+    display: inline-block;
+    text-align: center;
+}
+
+.btn:hover {
+    background-color: #2980b9;
+}
+
+.btn-secondary {
+    background-color: #7f8c8d;
+}
+
+.btn-secondary:hover {
+    background-color: #6c7a7c;
+}
+
+.inline-form {
+    display: inline-block;
+}
+
+/* Progress Styles */
+.generation-container {
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.progress-bar {
+    height: 20px;
+    background-color: #eee;
+    border-radius: 10px;
+    margin: 20px 0;
+    overflow: hidden;
+}
+
+.progress-indicator {
+    height: 100%;
+    background-color: #3498db;
+    width: 0%;
+    transition: width 0.5s;
+}
+
+.progress-details {
+    margin-top: 20px;
+}
+
+.step {
+    padding: 10px;
+    margin-bottom: 8px;
+    border-radius: 4px;
+    background-color: #f1f1f1;
+}
+
+.step.completed {
+    background-color: #e1f5fe;
+    border-left: 4px solid #03a9f4;
+}
+
+.step.in-progress {
+    background-color: #fff8e1;
+    border-left: 4px solid #ffc107;
+}
+
+.step.failed {
+    background-color: #ffebee;
+    border-left: 4px solid #f44336;
+}
+
+.error-message {
+    background-color: #ffebee;
+    color: #c62828;
+    padding: 10px;
+    border-radius: 4px;
+    margin: 15px 0;
+}
+
+/* Success Message */
+.success-message {
+    background-color: #e8f5e9;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    text-align: center;
+}
+
+.success-message h2 {
+    color: #2e7d32;
+    margin-bottom: 15px;
+}
+
+.actions {
+    margin-top: 25px;
+}
+
+/* App Details Styles */
+.app-details {
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.app-description {
+    font-style: italic;
+    margin-bottom: 20px;
+    padding: 10px;
+    background-color: #f5f5f5;
+    border-radius: 4px;
+}
+
+.app-structure {
+    margin: 25px 0;
+}
+
+.structure-section {
+    margin-bottom: 20px;
+}
+
+.structure-section h4 {
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #2c3e50;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+}
+
+.structure-list {
+    list-style-type: none;
+    margin-left: 20px;
+}
+
+.structure-list li {
+    padding: 5px 0;
+}
+
+.empty-item {
+    color: #999;
+    font-style: italic;
+}
+
+.app-actions {
+    margin-top: 30px;
+    text-align: center;
+}
+
+/* Error Styles */
+.error-container {
+    background-color: #fff;
+    padding: 30px;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    text-align: center;
+}
+
+.error-container h2 {
+    color: #c62828;
+    margin-bottom: 15px;
+}
+
+/* Footer */
+footer {
+    text-align: center;
+    margin-top: 40px;
+    padding: 20px;
+    color: #7f8c8d;
+}
+
+/* Daytona Integration Styles */
+.daytona-info {
+    background-color: #f0f8ff;
+    border: 1px solid #d0e1f9;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+}
+
+.daytona-info h3 {
+    color: #1e88e5;
+    margin-bottom: 15px;
+}
+
+.daytona-info p {
+    margin-bottom: 10px;
+}
+
+.daytona-info a {
+    color: #0d47a1;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.daytona-info a:hover {
+    text-decoration: underline;
+}
+
+.daytona-actions {
+    margin-top: 15px;
+}
+
+/* Terminal-like styling */
+.terminal {
+    background-color: #212121;
+    color: #f1f1f1;
+    font-family: monospace;
+    border-radius: 6px;
+    padding: 15px;
+    margin: 20px 0;
+    overflow: auto;
+    max-height: 300px;
+}
+
+.terminal pre {
+    margin: 0;
+    white-space: pre-wrap;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.terminal .prompt {
+    color: #00bcd4;
+    font-weight: bold;
+}
+
+.terminal .command {
+    color: #fff;
+}
+
+.terminal .output {
+    color: #b0bec5;
+}
+
+.terminal .error {
+    color: #f44336;
+}
+
+.terminal .success {
+    color: #4caf50;
+}
+
+/* Local Files Info Styles */
+.local-info {
+    background-color: #f5f5f5;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 20px 0;
+}
+
+.local-info h3 {
+    color: #2e7d32;
+    margin-bottom: 15px;
+}
+
+.local-info p {
+    margin-bottom: 10px;
+}
+
+.local-info .btn {
+    background-color: #4caf50;
+}
+
+.local-info .btn:hover {
+    background-color: #388e3c;
+}

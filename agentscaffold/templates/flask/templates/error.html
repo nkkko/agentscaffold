@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>{{ app_name }}</h1>
+            <p>Self-building Flask application</p>
+        </header>
+        
+        <main>
+            <div class="error-container">
+                <h2>{{ title }}</h2>
+                <p class="error-message">{{ error }}</p>
+                
+                <div class="actions">
+                    <a href="{{ url_for('index') }}" class="btn">Return to Home</a>
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <p>&copy; {{ app_name }} - Built with AgentScaffold</p>
+        </footer>
+    </div>
+</body>
+</html>

@@ -1,0 +1,1139 @@
+{% raw %}
+import os
+import json
+import uuid
+import time
+import logging
+import asyncio
+from datetime import datetime
+from typing import Optional, Dict, Any, List, Union
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("FlaskAppBuilder")
+
+class FlaskAppBuilder:
+    def __init__(self):
+        self._generation_id: Optional[str] = None
+        self._progress: Dict[str, Any] = {}
+        self._generated_app: Optional[Dict[str, Any]] = None
+        self._description: Optional[str] = None
+        self._llm_provider = None
+        self._daytona_client = None
+        self._mcp_client = None
+        
+        # Try to initialize providers
+        self._init_providers()
+
+    def _init_providers(self):
+        """Initialize LLM, Daytona and MCP providers if credentials are available."""
+        # Load environment variables
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            logger.info("Loaded environment variables from .env file")
+        except ImportError:
+            logger.warning("python-dotenv not installed. Using environment variables as is.")
+            
+        # Check for OpenAI credentials
+        openai_api_key = os.environ.get("OPENAI_API_KEY")
+        if openai_api_key:
+            try:
+                import openai
+                openai.api_key = openai_api_key
+                self._llm_provider = "openai"
+                logger.info("✅ Initialized OpenAI as LLM provider")
+            except ImportError:
+                logger.warning("⚠️ OpenAI package not installed. Run: pip install openai")
+        else:
+            logger.warning("⚠️ No OpenAI API key found. Add one with: agentscaffold mcp-add openai")
+            
+        # Check for Anthropic credentials
+        anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if anthropic_api_key and not self._llm_provider:
+            try:
+                import anthropic
+                self._anthropic_client = anthropic.Anthropic(api_key=anthropic_api_key)
+                self._llm_provider = "anthropic"
+                logger.info("✅ Initialized Anthropic as LLM provider")
+            except ImportError:
+                logger.warning("⚠️ Anthropic package not installed. Run: pip install anthropic")
+        elif not self._llm_provider:
+            logger.warning("⚠️ No Anthropic API key found. Add one with: agentscaffold mcp-add anthropic")
+        
+        # Check for Daytona credentials
+        daytona_api_key = os.environ.get("DAYTONA_API_KEY")
+        if daytona_api_key:
+            try:
+                from daytona_sdk import Daytona, DaytonaConfig
+                daytona_config = DaytonaConfig(
+                    api_key=daytona_api_key,
+                    server_url=os.environ.get("DAYTONA_API_URL", "https://api.daytona.com"),
+                    target=os.environ.get("DAYTONA_TARGET", "us")
+                )
+                self._daytona_client = Daytona(daytona_config)
+                logger.info("✅ Initialized Daytona client")
+            except ImportError:
+                logger.warning("⚠️ Daytona SDK not installed. Run: pip install daytona-sdk")
+        else:
+            logger.warning("⚠️ No Daytona API key found. Add one with: agentscaffold mcp-add daytona")
+        
+        # Try to import MCP client
+        try:
+            from agentscaffold.providers.mcp.client import MCPClient
+            from agentscaffold.providers.mcp.base import MCPConfig
+            
+            self._mcp_client = MCPClient(config=MCPConfig())
+            logger.info("✅ Initialized MCP client")
+        except ImportError:
+            logger.warning("⚠️ MCP client not available. Make sure agentscaffold is installed correctly.")
+        
+        if not self._llm_provider and not self._daytona_client:
+            logger.warning("⚠️ No LLM or Daytona provider configured. Generation will be simulated.")
+            logger.warning("⚠️ To add providers, run: agentscaffold mcp-add <provider>")
+            logger.warning("⚠️ Available providers: openai, anthropic, daytona")
+
+    async def _generate_with_openai(self, description: str) -> Dict[str, Any]:
+        """Generate application components using OpenAI."""
+        import openai
+        import re
+        
+        try:
+            logger.info("Generating application with OpenAI")
+            
+            # Add step to progress
+            self._add_step("Sending request to OpenAI")
+            
+            # Create the request to OpenAI with a stronger prompt for JSON
+            response = openai.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are an expert Flask application developer. Generate a detailed application structure based on the user's description. Your response must be a valid JSON object with the structure defined by the user. Do not include any explanations or markdown formatting, just the JSON."},
+                    {"role": "user", "content": f"""
+    Generate a Flask application based on this description: {description}.
+
+    Include routes, database models, and UI components.
+
+    Format your response as a valid JSON object with exactly the following structure:
+    {{
+    "routes": ["route1", "route2", ...],
+    "models": ["model1", "model2", ...],
+    "templates": ["template1", "template2", ...],
+    "components": ["component1", "component2", ...]
+    }}
+
+    Return ONLY the JSON with no other text, explanations, or code blocks.
+    """}
+                ],
+                temperature=0.5,
+                max_tokens=2000,
+             
+            )
+            
+            # Complete the step
+            self._complete_current_step()
+            
+            # Parse the response
+            content = response.choices[0].message.content
+            
+            # Try to clean the response if it contains markdown code blocks
+            if "```" in content:
+                # Extract JSON from markdown code blocks
+                json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+                if json_match:
+                    content = json_match.group(1).strip()
+            
+            try:
+                # Try to parse as JSON
+                app_structure = json.loads(content)
+                logger.info("Successfully parsed OpenAI response as JSON")
+                return app_structure
+            except json.JSONDecodeError as e:
+                # If not valid JSON, extract what we can
+                logger.warning(f"OpenAI response was not valid JSON: {e}. Extracting manually.")
+                
+                # Try to repair common JSON issues
+                # 1. Replace single quotes with double quotes
+                repaired_content = content.replace("'", '"')
+                
+                # 2. Try to find a JSON-like structure and extract it
+                json_pattern = r'\{[\s\S]*\}'
+                json_match = re.search(json_pattern, repaired_content)
+                if json_match:
+                    try:
+                        repaired_json = json_match.group(0)
+                        app_structure = json.loads(repaired_json)
+                        logger.info("Successfully parsed repaired JSON")
+                        return app_structure
+                    except json.JSONDecodeError:
+                        pass
+                
+                # If all attempts fail, extract sections manually
+                app_structure = {
+                    "routes": self._extract_section(content, "routes"),
+                    "models": self._extract_section(content, "models"),
+                    "templates": self._extract_section(content, "templates"),
+                    "components": self._extract_section(content, "components")
+                }
+                
+                logger.info(f"Manually extracted sections: routes={len(app_structure['routes'])}, models={len(app_structure['models'])}, templates={len(app_structure['templates'])}, components={len(app_structure['components'])}")
+                return app_structure
+                
+        except Exception as e:
+            logger.error(f"Error generating with OpenAI: {e}")
+            self._fail_current_step(str(e))
+            return {"error": str(e)}
+
+    def _extract_section(self, content: str, section: str) -> List[str]:
+        """Extract a section from non-JSON LLM output."""
+        import re
+        
+        # Look for section in various formats
+        patterns = [
+            rf'"{section}"\s*:\s*\[(.*?)\]',           # "section": [...]
+            rf'{section}\s*:\s*\[(.*?)\]',             # section: [...]
+            rf'"{section}"\s*:\s*\[\s*([^\]]*?)\s*\]', # "section": [ ... ] with whitespace
+            rf'{section}:\s*\n(.*?)(?:\n\n|\n[A-Za-z]+:)',  # section:\n...\n\n or \nAnotherSection:
+        ]
+        
+        for pattern in patterns:
+            matches = re.search(pattern, content, re.DOTALL)
+            if matches:
+                items_str = matches.group(1)
+                # Extract items from the array
+                items = []
+                
+                # Look for quoted strings
+                for item in re.finditer(r'"(.*?)"', items_str):
+                    items.append(item.group(1))
+                
+                # If no quoted strings found, try comma-separated format
+                if not items and ',' in items_str:
+                    for item in items_str.split(','):
+                        cleaned = item.strip().strip('"\'')
+                        if cleaned:
+                            items.append(cleaned)
+                
+                return items
+        
+        # If no matches found, try to find any list-like structures
+        list_pattern = r'\[(.*?)\]'
+        matches = re.search(list_pattern, content, re.DOTALL)
+        if matches:
+            items_str = matches.group(1)
+            items = []
+            for item in re.finditer(r'"(.*?)"', items_str):
+                items.append(item.group(1))
+            if not items and ',' in items_str:
+                for item in items_str.split(','):
+                    cleaned = item.strip().strip('"\'')
+                    if cleaned:
+                        items.append(cleaned)
+            return items
+        
+        # Last resort: try to find any items that might belong to this section
+        section_items = []
+        if section == "routes":
+            for route in re.finditer(r'/\w+(?:/\w+)*', content):
+                section_items.append(route.group(0))
+        elif section == "models":
+            for model in re.finditer(r'(?:class|model)\s+(\w+)', content, re.IGNORECASE):
+                section_items.append(model.group(1))
+        elif section == "templates":
+            for template in re.finditer(r'(\w+\.html)', content):
+                section_items.append(template.group(1))
+        
+        return section_items    
+    async def _generate_with_anthropic(self, description: str) -> Dict[str, Any]:
+        """Generate application components using Anthropic."""
+        try:
+            logger.info("Generating application with Anthropic")
+            
+            # Add step to progress
+            self._add_step("Sending request to Anthropic")
+            
+            # Create the request to Anthropic
+            response = await self._anthropic_client.messages.create(
+                model="claude-3-opus-20240229",
+                max_tokens=2000,
+                system="You are an expert Flask application developer. Generate a detailed application structure based on the user's description. Always respond with valid JSON.",
+                messages=[
+                    {"role": "user", "content": f"Generate a Flask application based on this description: {description}. Include routes, database models, and UI components. Format your response as JSON with the following structure: {{'routes': [], 'models': [], 'templates': [], 'components': []}}"}
+                ]
+            )
+            
+            # Complete the step
+            self._complete_current_step()
+            
+            # Parse the response
+            content = response.content[0].text
+            try:
+                # Try to parse as JSON
+                app_structure = json.loads(content)
+                return app_structure
+            except json.JSONDecodeError:
+                # If not valid JSON, extract what we can
+                logger.warning("Anthropic response was not valid JSON. Extracting manually.")
+                
+                # Simple extraction of JSON-like content
+                app_structure = {
+                    "routes": self._extract_section(content, "routes"),
+                    "models": self._extract_section(content, "models"),
+                    "templates": self._extract_section(content, "templates"),
+                    "components": self._extract_section(content, "components")
+                }
+                return app_structure
+                
+        except Exception as e:
+            logger.error(f"Error generating with Anthropic: {e}")
+            self._fail_current_step(str(e))
+            return {"error": str(e)}
+    
+    def _extract_section(self, content: str, section: str) -> List[str]:
+        """Extract a section from non-JSON LLM output."""
+        import re
+        
+        # Look for section in various formats
+        patterns = [
+            rf'"{section}"\s*:\s*\[(.*?)\]',  # "section": [...]
+            rf'{section}\s*:\s*\[(.*?)\]',     # section: [...]
+            rf'{section}:\s*\n(.*?)(?:\n\n|\n[A-Za-z]+:)',  # section:\n...\n\n or \nAnotherSection:
+        ]
+        
+        for pattern in patterns:
+            matches = re.search(pattern, content, re.DOTALL)
+            if matches:
+                items_str = matches.group(1)
+                # Extract items from the array
+                items = []
+                for item in re.finditer(r'"(.*?)"', items_str):
+                    items.append(item.group(1))
+                return items
+        
+        # If no matches found, try to find any list-like structures
+        list_pattern = r'\[(.*?)\]'
+        matches = re.search(list_pattern, content, re.DOTALL)
+        if matches:
+            items_str = matches.group(1)
+            items = []
+            for item in re.finditer(r'"(.*?)"', items_str):
+                items.append(item.group(1))
+            return items
+            
+        return []
+
+    def _add_step(self, step_name: str):
+        """Add a new step to the progress."""
+        if 'steps' not in self._progress:
+            self._progress['steps'] = []
+            
+        self._progress['steps'].append({
+            'name': step_name,
+            'status': 'in_progress',
+            'started_at': datetime.now().isoformat()
+        })
+        logger.info(f"Started step: {step_name}")
+    
+    def _complete_current_step(self):
+        """Mark the current step as completed."""
+        if 'steps' in self._progress and self._progress['steps']:
+            current_step = self._progress['steps'][-1]
+            current_step['status'] = 'completed'
+            current_step['completed_at'] = datetime.now().isoformat()
+            logger.info(f"Completed step: {current_step['name']}")
+    
+    def _fail_current_step(self, error: str):
+        """Mark the current step as failed."""
+        if 'steps' in self._progress and self._progress['steps']:
+            current_step = self._progress['steps'][-1]
+            current_step['status'] = 'failed'
+            current_step['error'] = error
+            current_step['completed_at'] = datetime.now().isoformat()
+            logger.error(f"Failed step: {current_step['name']} - {error}")
+ 
+    def generate_app(self, description: str):
+        """Start the application generation process."""
+        # Reset previous generation state
+        self._generation_id = str(uuid.uuid4())
+        self._description = description
+        self._progress = {
+            'id': self._generation_id,
+            'started_at': datetime.now().isoformat(),
+            'description': description,
+            'status': 'in_progress',
+            'steps': []
+        }
+        
+        logger.info(f"Starting application generation: {description}")
+        
+        # Run the async generation process in a background thread
+        import threading
+        
+        def run_async_generation():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(self._generate_app_async(description))
+            except Exception as e:
+                logger.error(f"Error in generation process: {e}")
+                self._progress['status'] = 'failed'
+                self._progress['error'] = str(e)
+            finally:
+                loop.close()
+        
+        # Start the generation process in a background thread
+        thread = threading.Thread(target=run_async_generation)
+        thread.daemon = True
+        thread.start()
+
+    def get_progress_html(self) -> str:
+        """Get HTML representation of the current progress."""
+        if not self._progress:
+            return "No generation in progress."
+        
+        html = []
+        html.append("<div class='progress-details'>")
+        html.append(f"<h3>Generating: {self._progress.get('description', 'Unknown App')}</h3>")
+        
+        for step in self._progress.get('steps', []):
+            status_class = 'completed' if step.get('status') == 'completed' else 'in-progress'
+            if step.get('status') == 'failed':
+                status_class = 'failed'
+                error = step.get('error', 'Unknown error')
+                html.append(f"<div class='step {status_class}'>{step.get('name', 'Unknown Step')} - Error: {error}</div>")
+            else:
+                html.append(f"<div class='step {status_class}'>{step.get('name', 'Unknown Step')}</div>")
+        
+        if self._progress.get('status') == 'failed':
+            error = self._progress.get('error', 'Unknown error')
+            html.append(f"<div class='error-message'>Generation failed: {error}</div>")
+        
+        html.append("</div>")
+        return "".join(html)
+
+    def is_generation_complete(self) -> bool:
+        """Check if the generation process is complete."""
+        return self._progress.get('status') == 'completed'
+
+    def has_generated_app(self) -> bool:
+        """Check if an app has been generated."""
+        return self._generated_app is not None
+
+    def get_app_description(self) -> str:
+        """Get the description of the generated app."""
+        return self._description or ""
+    
+    def get_generated_app(self) -> Dict[str, Any]:
+        """Get the generated app data."""
+        return self._generated_app or {}
+
+    def reset(self):
+        """Reset the builder state."""
+        self._generation_id = None
+        self._progress = {}
+        self._generated_app = None
+        self._description = None
+        logger.info("Builder state reset")
+
+    async def _initialize_daytona_workspace(self, description: str) -> Dict[str, Any]:
+        """
+        Initialize a Daytona workspace for the application.
+        
+        Args:
+            description: Application description
+            
+        Returns:
+            Dict containing workspace info
+        """
+        if not self._daytona_client:
+            logger.warning("No Daytona client available. Skipping workspace creation.")
+            return {"status": "error", "message": "Daytona client not available"}
+        
+        try:
+            # Add step to progress
+            self._add_step("Creating Daytona workspace")
+            
+            # Create workspace parameters
+            from daytona_sdk import CreateWorkspaceParams
+            params = CreateWorkspaceParams(language="python")
+            
+            # Create workspace
+            self._workspace = self._daytona_client.create(params)
+            workspace_id = self._workspace.id
+            
+            logger.info(f"✅ Created Daytona workspace: {workspace_id}")
+            
+            # Complete the step
+            self._complete_current_step()
+            
+            # Create a dict with workspace info
+            workspace_info = {
+                "status": "success",
+                "workspace_id": workspace_id,
+                "created_at": time.time(),
+                "description": description
+            }
+            
+            return workspace_info
+        
+        except Exception as e:
+            logger.error(f"Error creating Daytona workspace: {e}")
+            self._fail_current_step(str(e))
+            return {"status": "error", "message": str(e)}
+
+    async def _execute_in_daytona(self, command: str, timeout: int = 60) -> Dict[str, Any]:
+        """
+        Execute a command in the Daytona workspace.
+        
+        Args:
+            command: Command to execute
+            timeout: Command timeout in seconds
+            
+        Returns:
+            Dict containing execution results
+        """
+        if not hasattr(self, '_workspace') or not self._workspace:
+            logger.warning("No Daytona workspace available. Skipping execution.")
+            return {"status": "error", "message": "Daytona workspace not available"}
+        
+        try:
+            # Execute command
+            logger.info(f"Executing in Daytona: {command}")
+            
+            # Run the command - using the correct parameters based on your SDK version
+            try:
+                # Try with environment parameter
+                response = self._workspace.process.exec(
+                    command,
+                    environment=self._get_env_vars()
+                )
+            except TypeError:
+                # Fall back to basic exec if environment not supported
+                try:
+                    response = self._workspace.process.exec(command)
+                except Exception as exec_error:
+                    logger.error(f"Error with basic exec: {exec_error}")
+                    return {"status": "error", "message": str(exec_error)}
+            
+            # Process response
+            logger.info(f"Command executed successfully in Daytona workspace")
+            
+            return {
+                "status": "success",
+                "output": response,
+                "workspace_id": self._workspace.id
+            }
+        
+        except Exception as e:
+            logger.error(f"Error executing in Daytona workspace: {e}")
+            return {"status": "error", "message": str(e)}
+
+    def _get_env_vars(self) -> Dict[str, str]:
+        """Get environment variables for Daytona execution."""
+        env_vars = {}
+        
+        # Add API keys
+        if getattr(self, "_llm_provider", None) == "openai":
+            openai_api_key = os.environ.get("OPENAI_API_KEY")
+            if openai_api_key:
+                env_vars["OPENAI_API_KEY"] = openai_api_key
+        
+        elif getattr(self, "_llm_provider", None) == "anthropic":
+            anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+            if anthropic_api_key:
+                env_vars["ANTHROPIC_API_KEY"] = anthropic_api_key
+        
+        # Add other keys
+        brave_api_key = os.environ.get("BRAVE_API_KEY")
+        if brave_api_key:
+            env_vars["BRAVE_API_KEY"] = brave_api_key
+        
+        logfire_api_key = os.environ.get("LOGFIRE_API_KEY")
+        if logfire_api_key:
+            env_vars["LOGFIRE_API_KEY"] = logfire_api_key
+        
+        return env_vars
+
+    async def _generate_app_files_in_daytona(self, app_structure: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate application files in the Daytona workspace.
+        
+        Args:
+            app_structure: Application structure
+            
+        Returns:
+            Dict containing generation results
+        """
+        if not hasattr(self, '_workspace') or not self._workspace:
+            logger.warning("No Daytona workspace available. Skipping file generation.")
+            return {"status": "error", "message": "Daytona workspace not available"}
+        
+        try:
+            # Add step to progress
+            self._add_step("Generating files in Daytona workspace")
+            
+            # Create app directory
+            await self._execute_in_daytona("mkdir -p /home/daytona/app")
+            await self._execute_in_daytona("cd /home/daytona/app")
+            
+            # Generate app.py
+            routes = app_structure.get("routes", [])
+            models = app_structure.get("models", [])
+            
+            app_py_content = self._generate_app_py(routes, models)
+            self._workspace.fs.upload_file("/home/daytona/app/app.py", app_py_content.encode('utf-8'))
+            logger.info("Generated app.py in Daytona workspace")
+            
+            # Generate models.py if needed
+            if models:
+                models_py_content = self._generate_models_py(models)
+                self._workspace.fs.upload_file("/home/daytona/app/models.py", models_py_content.encode('utf-8'))
+                logger.info("Generated models.py in Daytona workspace")
+            
+            # Create templates directory
+            await self._execute_in_daytona("mkdir -p /home/daytona/app/templates")
+            
+            # Generate templates
+            templates = app_structure.get("templates", [])
+            for template in templates:
+                template_content = self._generate_template(template)
+                self._workspace.fs.upload_file(f"/home/daytona/app/templates/{template}", template_content.encode('utf-8'))
+                logger.info(f"Generated template: {template}")
+            
+            # Create static directory
+            await self._execute_in_daytona("mkdir -p /home/daytona/app/static/css")
+            
+            # Generate CSS
+            css_content = self._generate_css()
+            self._workspace.fs.upload_file("/home/daytona/app/static/css/style.css", css_content.encode('utf-8'))
+            logger.info("Generated CSS in Daytona workspace")
+            
+            # Generate requirements.txt
+            requirements_content = self._generate_requirements()
+            self._workspace.fs.upload_file("/home/daytona/app/requirements.txt", requirements_content.encode('utf-8'))
+            logger.info("Generated requirements.txt in Daytona workspace")
+            
+            # Install requirements
+            await self._execute_in_daytona("cd /home/daytona/app && pip install -r requirements.txt")
+            
+            # Complete the step
+            self._complete_current_step()
+            
+            return {
+                "status": "success",
+                "workspace_id": self._workspace.id,
+                "files": {
+                    "app.py": True,
+                    "models.py": len(models) > 0,
+                    "templates": templates,
+                    "static/css/style.css": True,
+                    "requirements.txt": True
+                }
+            }
+        
+        except Exception as e:
+            logger.error(f"Error generating files in Daytona workspace: {e}")
+            self._fail_current_step(str(e))
+            return {"status": "error", "message": str(e)}
+
+    def _generate_app_py(self, routes, models):
+        """Generate app.py content based on routes and models."""
+        imports = [
+            "import os",
+            "from flask import Flask, render_template, request, jsonify, redirect, url_for"
+        ]
+        
+        if models:
+            imports.append("from models import " + ", ".join(models))
+        
+        app_setup = [
+            "",
+            "app = Flask(__name__)",
+            ""
+        ]
+        
+        # Add database setup if models exist
+        if models:
+            imports.append("from flask_sqlalchemy import SQLAlchemy")
+            imports.append("from flask_migrate import Migrate")
+            
+            app_setup.extend([
+                "# Configure database",
+                "app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///app.db')",
+                "app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False",
+                "db = SQLAlchemy(app)",
+                "migrate = Migrate(app, db)",
+                ""
+            ])
+        
+        # Generate routes
+        route_functions = []
+        for route in routes:
+            route_name = route.strip('/').replace('/', '_') or 'index'
+            
+            route_functions.extend([
+                f"@app.route('{route}')",
+                f"def {route_name}():",
+                f"    return render_template('{route_name}.html')",
+                ""
+            ])
+        
+        # Add main block
+        main_block = [
+            "",
+            "if __name__ == '__main__':",
+            "    app.run(debug=True)"
+        ]
+        
+        # Combine all parts
+        app_py_content = "\n".join(imports + app_setup + route_functions + main_block)
+        return app_py_content
+
+    def _generate_models_py(self, models):
+        """Generate models.py content."""
+        imports = [
+            "from flask_sqlalchemy import SQLAlchemy",
+            "from datetime import datetime",
+            "",
+            "db = SQLAlchemy()",
+            ""
+        ]
+        
+        model_classes = []
+        for model in models:
+            model_classes.extend([
+                f"class {model}(db.Model):",
+                f"    id = db.Column(db.Integer, primary_key=True)",
+                f"    name = db.Column(db.String(100), nullable=False)",
+                f"    created_at = db.Column(db.DateTime, default=datetime.utcnow)",
+                "",
+                f"    def __repr__(self):",
+                f"        return f'<{model} {{self.name}}>'"
+                ""
+            ])
+        
+        return "\n".join(imports + model_classes)
+
+    def _generate_template(self, template_name):
+        """Generate template content."""
+        base_template = """<!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{{ title }}</title>
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    </head>
+    <body>
+        <header>
+            <h1>{{ title }}</h1>
+        </header>
+        
+        <main>
+            <div class="content">
+                <!-- Main content goes here -->
+                <p>Welcome to the """ + template_name.replace('.html', '') + """ page!</p>
+            </div>
+        </main>
+        
+        <footer>
+            <p>&copy; 2025 - Generated with Flask Builder</p>
+        </footer>
+    </body>
+    </html>"""
+        
+        return base_template
+
+    def _generate_css(self):
+        """Generate CSS content."""
+        return """/* General Styles */
+    * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+    }
+
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        line-height: 1.6;
+        color: #333;
+        background-color: #f5f7fa;
+    }
+
+    .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 20px;
+    }
+
+    /* Header */
+    header {
+        background-color: #3498db;
+        color: white;
+        text-align: center;
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+    }
+
+    /* Main Content */
+    main {
+        padding: 2rem;
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        margin-bottom: 2rem;
+    }
+
+    .content {
+        margin-bottom: 2rem;
+    }
+
+    /* Footer */
+    footer {
+        text-align: center;
+        padding: 1rem;
+        background-color: #2c3e50;
+        color: white;
+    }
+
+    /* Forms */
+    form {
+        margin-bottom: 2rem;
+    }
+
+    .form-group {
+        margin-bottom: 1rem;
+    }
+
+    label {
+        display: block;
+        margin-bottom: 0.5rem;
+        font-weight: bold;
+    }
+
+    input, textarea, select {
+        width: 100%;
+        padding: 0.5rem;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+    }
+
+    button {
+        background-color: #3498db;
+        color: white;
+        border: none;
+        padding: 0.5rem 1rem;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+
+    button:hover {
+        background-color: #2980b9;
+    }
+    """
+
+    def _generate_requirements(self):
+        """Generate requirements.txt content."""
+        return """Flask==2.0.1
+    Flask-SQLAlchemy==2.5.1
+    Flask-Migrate==3.1.0
+    python-dotenv==0.19.0
+    requests==2.26.0
+    gunicorn==20.1.0
+    """
+
+    async def _run_app_in_daytona(self) -> Dict[str, Any]:
+        """
+        Run the Flask application in the Daytona workspace.
+        
+        Returns:
+            Dict containing run results
+        """
+        if not hasattr(self, '_workspace') or not self._workspace:
+            logger.warning("No Daytona workspace available. Skipping app run.")
+            return {"status": "error", "message": "Daytona workspace not available"}
+        
+        try:
+            # Add step to progress
+            self._add_step("Running application in Daytona workspace")
+            
+            # Run the Flask app in the background
+            result = await self._execute_in_daytona("cd /home/daytona/app && FLASK_APP=app.py flask run --host=0.0.0.0 > /home/daytona/app/flask.log 2>&1 &")
+            
+            # Wait for the app to start
+            await asyncio.sleep(2)
+            
+            # Check if the app is running
+            check_result = await self._execute_in_daytona("ps aux | grep flask")
+            
+            # Get the app URL
+            if result.get("status") == "success" and "flask run" in check_result.get("output", ""):
+                workspace_id = self._workspace.id
+                app_url = f"https://{workspace_id}.daytona.app"
+                
+                # Complete the step
+                self._complete_current_step()
+                
+                return {
+                    "status": "success",
+                    "workspace_id": workspace_id,
+                    "app_url": app_url,
+                    "running": True
+                }
+            else:
+                logger.error("Failed to start Flask app in Daytona workspace")
+                self._fail_current_step("Failed to start Flask app")
+                
+                return {
+                    "status": "error",
+                    "message": "Failed to start Flask app in Daytona workspace"
+                }
+        
+        except Exception as e:
+            logger.error(f"Error running app in Daytona workspace: {e}")
+            self._fail_current_step(str(e))
+            return {"status": "error", "message": str(e)}
+
+    async def _generate_app_async(self, description: str):
+        """Asynchronous app generation process with both Daytona and local generation."""
+        app_structure = None
+        daytona_info = {}
+        local_info = {}
+        
+        # Step 1: Initial setup
+        self._add_step("Initializing application generation")
+        self._complete_current_step()
+        
+        # Step 2: Analyze requirements
+        self._add_step("Analyzing application requirements")
+        # Add a small delay to simulate processing
+        await asyncio.sleep(1)
+        self._complete_current_step()
+        
+        # Step 3: Initialize Daytona workspace if available
+        if self._daytona_client:
+            workspace_info = await self._initialize_daytona_workspace(description)
+            if workspace_info.get("status") == "success":
+                daytona_info["workspace_id"] = workspace_info.get("workspace_id")
+                daytona_info["app_url"] = f"https://{workspace_info.get('workspace_id')}.daytona.app" if workspace_info.get("workspace_id") else None
+            else:
+                logger.warning("Could not create Daytona workspace. Continuing without it.")
+        
+        # Step 4: Generate application structure with LLM
+        if self._llm_provider == "openai":
+            app_structure = await self._generate_with_openai(description)
+        elif self._llm_provider == "anthropic":
+            app_structure = await self._generate_with_anthropic(description)
+        else:
+            # No LLM provider, add simulated steps
+            self._add_step("Simulating application structure generation (No LLM provider configured)")
+            await asyncio.sleep(2)
+            self._complete_current_step()
+            
+            # Create a default structure
+            app_structure = {
+                "routes": ["/", "/about", "/contact"],
+                "models": ["User", "Post", "Comment"],
+                "templates": ["index.html", "about.html", "contact.html"],
+                "components": ["Header", "Footer", "Sidebar"]
+            }
+        
+        # Step 5: Generate application files both in Daytona and locally
+        self._add_step("Generating application files")
+        
+        # Generate files in Daytona if available
+        if hasattr(self, '_workspace') and self._workspace:
+            try:
+                daytona_result = await self._generate_app_files_in_daytona(app_structure)
+                if daytona_result.get("status") == "error":
+                    logger.warning("Could not generate files in Daytona workspace. Continuing without it.")
+            except Exception as e:
+                logger.error(f"Error generating files in Daytona: {e}")
+        
+        # Generate files locally
+        try:
+            local_result = await self._generate_app_files_locally(app_structure, description)
+            if local_result.get("status") == "success":
+                local_info["app_dir"] = local_result.get("app_dir")
+                local_info["app_zip"] = local_result.get("app_zip")
+        except Exception as e:
+            logger.error(f"Error generating files locally: {e}")
+        
+        self._complete_current_step()
+        
+        # Step 6: Setting up routes and views
+        self._add_step("Setting up routes and views")
+        await asyncio.sleep(1.5)
+        self._complete_current_step()
+        
+        # Step 7: Creating templates
+        self._add_step("Creating UI templates")
+        await asyncio.sleep(1.5)
+        self._complete_current_step()
+        
+        # Step 8: Configuring dependencies
+        self._add_step("Configuring dependencies")
+        await asyncio.sleep(1)
+        self._complete_current_step()
+        
+        # Step 9: Run the app in Daytona if available
+        if hasattr(self, '_workspace') and self._workspace:
+            try:
+                daytona_run_result = await self._run_app_in_daytona()
+                if daytona_run_result.get("status") == "success":
+                    app_url = daytona_run_result.get("app_url")
+                    logger.info(f"Flask app running in Daytona workspace: {app_url}")
+                    daytona_info["app_url"] = app_url
+                    daytona_info["running"] = True
+            except Exception as e:
+                logger.error(f"Error running app in Daytona: {e}")
+        
+        # Step 10: Finalizing application
+        self._add_step("Finalizing application")
+        await asyncio.sleep(1)
+        self._complete_current_step()
+        
+        # Set the generated app data
+        self._generated_app = {
+            "name": "Generated App",
+            "description": description,
+            "structure": app_structure,
+            "generated_at": datetime.now().isoformat(),
+            "daytona": daytona_info,
+            "local": local_info
+        }
+        
+        # Mark generation as completed
+        self._progress['status'] = 'completed'
+        self._progress['completed_at'] = datetime.now().isoformat()
+        logger.info(f"Application generation completed: {description}")
+
+    async def _generate_app_files_locally(self, app_structure: Dict[str, Any], description: str) -> Dict[str, Any]:
+        """
+        Generate application files locally.
+        
+        Args:
+            app_structure: Application structure
+            description: Application description
+            
+        Returns:
+            Dict containing generation results
+        """
+        try:
+            # Add step to progress
+            self._add_step("Generating files locally")
+            
+            # Create a directory for this app
+            import os
+            import time
+            import shutil
+            from pathlib import Path
+            
+            # Create a sanitized app name from the description
+            app_name = "".join(c if c.isalnum() else "_" for c in description.lower())
+            app_name = app_name[:30]  # Limit length
+            timestamp = int(time.time())
+            app_dir = Path(f"generated_apps/{app_name}_{timestamp}")
+            
+            # Create directories
+            os.makedirs(app_dir, exist_ok=True)
+            os.makedirs(app_dir / "templates", exist_ok=True)
+            os.makedirs(app_dir / "static" / "css", exist_ok=True)
+            
+            # Store the app directory for later use
+            self._local_app_dir = app_dir
+            
+            # Generate app.py
+            routes = app_structure.get("routes", [])
+            models = app_structure.get("models", [])
+            
+            app_py_content = self._generate_app_py(routes, models)
+            with open(app_dir / "app.py", "w") as f:
+                f.write(app_py_content)
+            logger.info(f"Generated app.py in {app_dir}")
+            
+            # Generate models.py if needed
+            if models:
+                models_py_content = self._generate_models_py(models)
+                with open(app_dir / "models.py", "w") as f:
+                    f.write(models_py_content)
+                logger.info(f"Generated models.py in {app_dir}")
+            
+            # Generate templates
+            templates = app_structure.get("templates", [])
+            for template in templates:
+                template_content = self._generate_template(template)
+                with open(app_dir / "templates" / template, "w") as f:
+                    f.write(template_content)
+                logger.info(f"Generated template: {template}")
+            
+            # Generate CSS
+            css_content = self._generate_css()
+            with open(app_dir / "static" / "css" / "style.css", "w") as f:
+                f.write(css_content)
+            logger.info(f"Generated CSS in {app_dir}")
+            
+            # Generate requirements.txt
+            requirements_content = self._generate_requirements()
+            with open(app_dir / "requirements.txt", "w") as f:
+                f.write(requirements_content)
+            logger.info(f"Generated requirements.txt in {app_dir}")
+            
+            # Generate README.md
+            readme_content = f"""# {description}
+
+    A Flask application generated by Flask Builder.
+
+    ## Installation
+
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+    ## Running the Application
+
+    ```bash
+    flask run
+    ```
+
+    Visit http://localhost:5000 in your browser.
+
+    ## Features
+
+    {", ".join(routes) if routes else "No routes defined"}
+
+    ## Models
+
+    {", ".join(models) if models else "No models defined"}
+    """
+            with open(app_dir / "README.md", "w") as f:
+                f.write(readme_content)
+            logger.info(f"Generated README.md in {app_dir}")
+            
+            # Create a zip file of the application
+            shutil.make_archive(str(app_dir), 'zip', app_dir.parent, app_dir.name)
+            logger.info(f"Created zip archive: {app_dir}.zip")
+            
+            # Complete the step
+            self._complete_current_step()
+            
+            return {
+                "status": "success",
+                "app_dir": str(app_dir),
+                "app_zip": f"{app_dir}.zip",
+                "files": {
+                    "app.py": True,
+                    "models.py": len(models) > 0,
+                    "templates": templates,
+                    "static/css/style.css": True,
+                    "requirements.txt": True,
+                    "README.md": True
+                }
+            }
+        
+        except Exception as e:
+            logger.error(f"Error generating files locally: {e}")
+            self._fail_current_step(str(e))
+            return {"status": "error", "message": str(e)}
+{% endraw %}
