@@ -21,7 +21,7 @@ Main class for interacting with the Daytona server API.
 from daytona_sdk import Daytona, DaytonaConfig
 
 # Initialize using environment variables
-daytona = Daytona()  # Uses DAYTONA_API_KEY, DAYTONA_SERVER_URL, DAYTONA_TARGET
+daytona = Daytona()  # Uses DAYTONA_API_KEY, DAYTONA_API_URL, DAYTONA_TARGET
 
 # Initialize with explicit configuration
 config = DaytonaConfig(

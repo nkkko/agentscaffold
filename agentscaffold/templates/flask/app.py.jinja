@@ -1,0 +1,161 @@
+import os
+import json
+import logging
+from flask import Flask, render_template, request, jsonify, abort, redirect, url_for
+from builder import FlaskAppBuilder
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, 
+                   format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("FlaskApp")
+
+app = Flask(__name__)
+builder = FlaskAppBuilder()
+
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        description = request.form.get('description', '')
+        if not description:
+            return render_template('index.html', 
+                                  title='Error', 
+                                  app_name='Flask Builder', 
+                                  error='Please provide a description')
+        
+        # Start the application build process
+        builder.generate_app(description)
+        
+        return render_template('index.html', 
+                              title='Generating App', 
+                              app_name='Flask Builder', 
+                              description=description, 
+                              progress='Generating your application...')
+    
+    return render_template('index.html', 
+                          title='Flask App Builder', 
+                          app_name='Flask Builder', 
+                          builder=builder)
+
+@app.route('/progress')
+def progress():
+    # Check the current progress of app generation
+    progress_html = builder.get_progress_html()
+    completed = builder.is_generation_complete()
+    
+    return jsonify({
+        'html': progress_html,
+        'completed': completed
+    })
+
+@app.route('/app-details')
+def app_details():
+    # Get details of the generated app
+    if not builder.has_generated_app():
+        return redirect(url_for('index'))
+    
+    app_data = builder.get_generated_app()
+    
+    return render_template('app_details.html',
+                          title='Generated App Details',
+                          app_name='Flask Builder',
+                          app_data=app_data)
+
+@app.route('/download')
+def download():
+    """Download the generated application as a zip file."""
+    if not builder.has_generated_app():
+        return redirect(url_for('index'))
+    
+    # Get the app data
+    app_data = builder.get_generated_app()
+    
+    # Check if we have a local app directory
+    if hasattr(builder, '_local_app_dir') and builder._local_app_dir:
+        app_zip = f"{builder._local_app_dir}.zip"
+        if os.path.exists(app_zip):
+            from flask import send_file
+            
+            # Extract the app name from the path
+            app_name = os.path.basename(builder._local_app_dir)
+            
+            return send_file(
+                app_zip,
+                mimetype='application/zip',
+                as_attachment=True,
+                download_name=f"{app_name}.zip"
+            )
+    
+    # If no local app file, redirect to app details
+    return redirect(url_for('app_details'))
+
+@app.route('/reset', methods=['POST'])
+def reset():
+    # Reset the builder state
+    builder.reset()
+    return redirect(url_for('index'))
+
+@app.route('/api/app-structure')
+def api_app_structure():
+    # API endpoint to get the app structure as JSON
+    if not builder.has_generated_app():
+        return jsonify({"error": "No app generated yet"}), 404
+    
+    app_data = builder.get_generated_app()
+    return jsonify(app_data)
+
+@app.route('/api/providers')
+def api_providers():
+    # API endpoint to get the configured providers
+    providers = {
+        "llm_provider": getattr(builder, "_llm_provider", None),
+        "daytona_client": getattr(builder, "_daytona_client", None) is not None,
+        "mcp_client": getattr(builder, "_mcp_client", None) is not None,
+    }
+    return jsonify(providers)
+
+@app.errorhandler(404)
+def page_not_found(e):
+    return render_template('error.html', 
+                          title='404 Error', 
+                          app_name='Flask Builder', 
+                          error='Page not found'), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    return render_template('error.html', 
+                          title='500 Error', 
+                          app_name='Flask Builder', 
+                          error='Server error'), 500
+
+if __name__ == '__main__':
+    # Print helpful message about providers
+    print("\n" + "="*80)
+    print("Flask Builder Application")
+    print("="*80)
+    
+    # Check if providers are configured
+    has_llm = getattr(builder, "_llm_provider", None) is not None
+    has_daytona = getattr(builder, "_daytona_client", None) is not None
+    
+    if has_llm:
+        print(f"✅ Using {builder._llm_provider} as LLM provider")
+    else:
+        print("⚠️  No LLM provider configured. Generation will be simulated.")
+        print("   To add an LLM provider, run one of these commands:")
+        print("   - agentscaffold mcp add openai --env OPENAI_API_KEY=your_key --scope project")
+        print("   - agentscaffold mcp add anthropic --env ANTHROPIC_API_KEY=your_key --scope project")
+    
+    if has_daytona:
+        print("✅ Daytona client configured")
+    else:
+        print("⚠️  No Daytona client configured.")
+        print("   To add Daytona, run:")
+        print("   - agentscaffold mcp add daytona --env DAYTONA_API_KEY=your_key --scope project")
+    
+    # Print information about other providers
+    print("\nOther available providers:")
+    print("   - agentscaffold mcp add brave-search --type http --url https://api.search.brave.com --env BRAVE_API_KEY=your_key --scope project")
+    print("   - agentscaffold mcp add logfire --env LOGFIRE_API_KEY=your_key --scope project")
+    print("="*80 + "\n")
+    
+    app.run(debug=True)

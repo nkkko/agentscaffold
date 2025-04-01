@@ -62,7 +62,7 @@ Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md). We expect all 
 
    # Create .env file with the following variables
    echo "DAYTONA_API_KEY=your-daytona-api-key" >> .env
-   echo "DAYTONA_SERVER_URL=your-daytona-server-url" >> .env
+   echo "DAYTONA_API_URL=your-daytona-server-url" >> .env
    echo "DAYTONA_TARGET=us" >> .env
    ```
 

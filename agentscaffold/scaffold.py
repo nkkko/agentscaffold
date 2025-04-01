@@ -141,7 +141,7 @@ UTILITY_PACKAGES = {
 
 # Default Daytona configuration
 DAYTONA_CONFIG = {
-    "env_vars": ["DAYTONA_API_KEY", "DAYTONA_SERVER_URL", "DAYTONA_TARGET"],
+    "env_vars": ["DAYTONA_API_KEY", "DAYTONA_API_URL", "DAYTONA_TARGET"],
     "description": "Daytona API for secure execution"
 }
 
@@ -344,7 +344,14 @@ def prompt_text(message: str, default: Optional[str] = None, validator: Optional
             print("Invalid input. Please try again.")
 
 
-def get_agent_settings(name: Optional[str] = None) -> Dict[str, Any]:
+def get_agent_settings(
+    name: Optional[str] = None, 
+    llm_provider: Optional[str] = None,
+    search_provider: Optional[str] = None,
+    memory_provider: Optional[str] = None,
+    logging_provider: Optional[str] = None,
+    utilities: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
     """
     Get agent settings from user input or defaults.
     
@@ -639,7 +646,7 @@ def create_new_agent(
         env_example_content += """
 # Daytona configuration (required for secure execution)
 DAYTONA_API_KEY=your-daytona-api-key
-DAYTONA_SERVER_URL=your-daytona-server-url
+DAYTONA_API_URL=your-daytona-server-url
 DAYTONA_TARGET=us
 
 # Force Daytona execution (true/false)
@@ -656,29 +663,35 @@ FORCE_DAYTONA=true
         env_content = """# Environment variables for {}
 # Generated with actual API keys during setup
 
+
 """.format(settings["agent_name"])
-        
-        # Add API keys from settings
-        for key, value in settings["api_keys"].items():
-            if value:  # Only add if the value is not empty
-                env_content += f"{key}={value}\n"
-        
-        # Add other environment variables without values
-        for env_var, value in settings["env_vars"].items():
-            if env_var not in settings["api_keys"]:  # Skip if already added as an API key
-                env_content += f"{env_var}={value}\n"
-        
-        # Always ensure Daytona environment variables are included
+    
+    # Add API keys from settings
+    for key, value in settings["api_keys"].items():
+        if value:  # Only add if the value is not empty
+            env_content += f"{key}={value}\n"
+    
+    # Add other environment variables without values
+    daytona_vars_added = False
+    for env_var, value in settings["env_vars"].items():
+        if env_var not in settings["api_keys"]:  # Skip if already added as an API key
+            env_content += f"{env_var}={value}\n"
+            # Mark if we've added any Daytona variables
+            if env_var.startswith("DAYTONA_"):
+                daytona_vars_added = True
+    
+    # Only add Daytona section if not already added
+    if not daytona_vars_added:
         env_content += """
 # Daytona configuration (required for secure execution)
 DAYTONA_API_KEY=
-DAYTONA_SERVER_URL=
+DAYTONA_API_URL=
 DAYTONA_TARGET=us
 
 # Force Daytona execution (true/false)
 FORCE_DAYTONA=true
 """
-        
+    
         with open(env_path, 'w') as f:
             f.write(env_content)
         
@@ -732,44 +745,460 @@ logs/
             typer.echo(f"Created {gitignore_path}")
         else:
             print(f"Created {gitignore_path}")
+    
+    # Generate MCP integration files
+    generate_mcp_integration(template_dir, agent_dir, settings)
 
+    # Special handling for Flask template
+    if template == "flask":
+            # Add Flask-specific dependencies
+            dependencies = settings.get("dependencies", [])
+            for dep in ["flask", "python-dotenv"]:
+                if dep not in dependencies:
+                    dependencies.append(dep)
+            settings["dependencies"] = dependencies
+            
+            # Create app.py in root directory
+            app_template = os.path.join(template_dir, "app.py.jinja")
+            if os.path.exists(app_template):
+                _render_template_file(app_template, agent_dir, settings)
 
-def _render_template_file(
-    template_path: str,
-    output_dir: str,
-    context: Dict[str, Any],
-    is_package_file: bool = False,
-) -> None:
+def _render_template_file(template_file_path, output_dir, settings, is_package_file=False):
     """
-    Render a single template file and write it to the output directory.
-
+    Render a Jinja template file with the given settings.
+    
     Args:
-        template_path: Path to the template file
+        template_file_path: Path to the template file
         output_dir: Directory to output the rendered file
-        context: Template context
-        is_package_file: Whether the file is in the package directory
+        settings: Template variables
+        is_package_file: Whether this is a package file (affects output path)
     """
-    # Read the template file
-    with open(template_path, 'r') as f:
+    # Read template content
+    with open(template_file_path, 'r') as f:
         template_content = f.read()
-
-    # Render the template
-    env = jinja2.Environment()
+    
+    # Create Jinja environment
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(os.path.dirname(template_file_path)),
+        autoescape=jinja2.select_autoescape(['html', 'xml'])
+    )
+    
+    # Create template from string
     template = env.from_string(template_content)
-    rendered_content = template.render(**context)
-
-    # Determine the output file path
-    file_name = os.path.basename(template_path)
-    if file_name.endswith('.jinja'):
-        file_name = file_name[:-6]  # Remove .jinja extension
-
+    
+    # Render template with settings
+    rendered_content = template.render(**settings)
+    
+    # Determine output file name (remove .jinja extension)
+    file_name = os.path.basename(template_file_path).replace('.jinja', '')
+    
+    # Handle package file templates that use {{package_name}} placeholder
+    if is_package_file:
+        file_name = file_name.replace('{{package_name}}', settings['package_name'])
+    
+    # Create output file path
     output_file_path = os.path.join(output_dir, file_name)
-
-    # Write the rendered content to the output file
+    
+    # Write rendered content to output file
     with open(output_file_path, 'w') as f:
         f.write(rendered_content)
-        
+    
+    # Use typer.echo if available, otherwise use print
     if HAS_TYPER:
+        import typer
         typer.echo(f"Created {output_file_path}")
     else:
         print(f"Created {output_file_path}")
+
+
+def generate_mcp_integration(template_dir, agent_dir, settings):
+    """
+    Generate MCP integration files.
+    
+    Args:
+        template_dir: Path to the template directory
+        agent_dir: Path to the agent directory
+        settings: Template variables
+    """
+    # Create MCP configuration file
+    mcp_config = {
+        "name": settings["agent_name"],
+        "description": settings["description"],
+        "version": "0.1.0",
+        "integration_type": "agent",
+        "capabilities": {
+            "text": True,
+            "image": False,
+            "audio": False,
+            "video": False,
+            "file": False
+        },
+        "auth": {
+            "type": "api_key",
+            "header_name": "X-MCP-Auth"
+        },
+        "endpoints": {
+            "invoke": {
+                "path": "/api/invoke",
+                "method": "POST"
+            }
+        },
+        "settings": {}
+    }
+    
+    # Define mcpServers configuration
+    mcp_servers = {}
+    
+    # Add LLM provider configurations to MCP servers
+    llm_provider = settings.get("llm_provider", "none")
+    if llm_provider != "none":
+        if llm_provider == "openai":
+            mcp_servers["openai"] = {
+                "type": "http",
+                "url": "https://api.openai.com",
+                "capability": "llm",
+                "env": {
+                    "OPENAI_API_KEY": settings.get("api_keys", {}).get("OPENAI_API_KEY", "${OPENAI_API_KEY}")
+                }
+            }
+        elif llm_provider == "anthropic":
+            mcp_servers["anthropic"] = {
+                "type": "http",
+                "url": "https://api.anthropic.com",
+                "capability": "llm",
+                "env": {
+                    "ANTHROPIC_API_KEY": settings.get("api_keys", {}).get("ANTHROPIC_API_KEY", "${ANTHROPIC_API_KEY}")
+                }
+            }
+        elif llm_provider == "ollama":
+            mcp_servers["ollama"] = {
+                "type": "http",
+                "url": "${OLLAMA_BASE_URL:-http://localhost:11434}",
+                "capability": "llm"
+            }
+    
+    # Add Search provider configurations to MCP servers
+    search_provider = settings.get("search_provider", "none")
+    if search_provider != "none":
+        if search_provider == "brave":
+            mcp_servers["brave-search"] = {
+                "type": "http",
+                "url": "https://api.search.brave.com",
+                "capability": "search",
+                "env": {
+                    "BRAVE_API_KEY": settings.get("api_keys", {}).get("BRAVE_API_KEY", "${BRAVE_API_KEY}")
+                }
+            }
+        elif search_provider == "browserbase":
+            mcp_servers["browserbase"] = {
+                "type": "http",
+                "url": "https://api.browserbase.com",
+                "capability": "search",
+                "env": {
+                    "BROWSERBASE_API_KEY": settings.get("api_keys", {}).get("BROWSERBASE_API_KEY", "${BROWSERBASE_API_KEY}")
+                }
+            }
+        elif search_provider == "google":
+            mcp_servers["google-search"] = {
+                "type": "http",
+                "url": "https://www.googleapis.com",
+                "capability": "search",
+                "env": {
+                    "GOOGLE_API_KEY": settings.get("api_keys", {}).get("GOOGLE_API_KEY", "${GOOGLE_API_KEY}"),
+                    "GOOGLE_CSE_ID": settings.get("api_keys", {}).get("GOOGLE_CSE_ID", "${GOOGLE_CSE_ID}")
+                }
+            }
+    
+    # Add Memory provider configurations to MCP servers
+    memory_provider = settings.get("memory_provider", "none")
+    if memory_provider != "none":
+        if memory_provider == "chromadb":
+            mcp_servers["chroma-memory"] = {
+                "type": "http",
+                "url": "http://localhost:8000",
+                "capability": "memory",
+                "config": {
+                    "client_type": "persistent",
+                    "data_dir": "${CHROMADB_PERSISTENCE_DIR:-~/.agentscaffold/chroma}"
+                }
+            }
+        elif memory_provider == "pinecone":
+            mcp_servers["pinecone"] = {
+                "type": "http",
+                "url": "https://api.pinecone.io",
+                "capability": "memory",
+                "env": {
+                    "PINECONE_API_KEY": settings.get("api_keys", {}).get("PINECONE_API_KEY", "${PINECONE_API_KEY}"),
+                    "PINECONE_ENVIRONMENT": settings.get("api_keys", {}).get("PINECONE_ENVIRONMENT", "${PINECONE_ENVIRONMENT}")
+                }
+            }
+        elif memory_provider == "supabase":
+            mcp_servers["supabase"] = {
+                "type": "http",
+                "url": settings.get("api_keys", {}).get("SUPABASE_URL", "${SUPABASE_URL}"),
+                "capability": "memory",
+                "env": {
+                    "SUPABASE_KEY": settings.get("api_keys", {}).get("SUPABASE_KEY", "${SUPABASE_KEY}")
+                }
+            }
+    
+    # Add Logging provider configurations to MCP servers
+    logging_provider = settings.get("logging_provider", "none")
+    if logging_provider != "none":
+        if logging_provider == "logfire":
+            mcp_servers["logfire"] = {
+                "type": "http",
+                "url": "https://api.logfire.dev",
+                "capability": "logging",
+                "env": {
+                    "LOGFIRE_API_KEY": settings.get("api_keys", {}).get("LOGFIRE_API_KEY", "${LOGFIRE_API_KEY}")
+                }
+            }
+        elif logging_provider == "langfuse":
+            mcp_servers["langfuse"] = {
+                "type": "http",
+                "url": "https://api.langfuse.com",
+                "capability": "logging",
+                "env": {
+                    "LANGFUSE_PUBLIC_KEY": settings.get("api_keys", {}).get("LANGFUSE_PUBLIC_KEY", "${LANGFUSE_PUBLIC_KEY}"),
+                    "LANGFUSE_SECRET_KEY": settings.get("api_keys", {}).get("LANGFUSE_SECRET_KEY", "${LANGFUSE_SECRET_KEY}")
+                }
+            }
+    
+    # Add environment variables as settings
+    for env_var in settings.get("env_vars", {}):
+        # Skip Daytona environment variables
+        if env_var.startswith("DAYTONA_") or env_var == "FORCE_DAYTONA":
+            continue
+        
+        # Format the setting name
+        setting_name = env_var.lower().replace("_", "-")
+        mcp_config["settings"][setting_name] = {
+            "type": "string",
+            "description": f"Value for {env_var}",
+            "required": True,
+            "env_var": env_var
+        }
+    
+    # Add mcpServers to config if any were defined
+    if mcp_servers:
+        mcp_config["mcpServers"] = mcp_servers
+    
+    # Write MCP configuration file
+    mcp_config_path = os.path.join(agent_dir, ".mcp.json")
+    with open(mcp_config_path, 'w') as f:
+        json.dump(mcp_config, f, indent=2)
+    
+    # Use typer.echo if available, otherwise use print
+    if HAS_TYPER:
+        import typer
+        typer.echo(f"Created {mcp_config_path}")
+    else:
+        print(f"Created {mcp_config_path}")
+
+
+def create_daytona_config(agent_dir, settings):
+
+    """
+    Create Daytona workspace configuration.
+    
+    Args:
+        agent_dir: Path to the agent directory
+        settings: Template variables
+    """
+    # Create .daytona directory
+    daytona_dir = os.path.join(agent_dir, ".daytona")
+    os.makedirs(daytona_dir, exist_ok=True)
+    
+    # Create workspace.json file
+    workspace_config = {
+        "name": settings["agent_name"],
+        "description": settings["description"],
+        "env": {
+            "DAYTONA_TARGET": "us",
+            "FORCE_DAYTONA": "true"
+        },
+        "allowed_env": list(settings.get("env_vars", {}).keys())
+    }
+    
+    # Write workspace configuration file
+    workspace_path = os.path.join(daytona_dir, "workspace.json")
+    with open(workspace_path, 'w') as f:
+        json.dump(workspace_config, f, indent=2)
+    
+    # Use typer.echo if available, otherwise use print
+    if HAS_TYPER:
+        import typer
+        typer.echo(f"Created Daytona configuration at {workspace_path}")
+    else:
+        print(f"Created Daytona configuration at {workspace_path}")
+
+ 
+def create_flask_builder(name, description, output_dir):
+    """
+    Create a Flask application with builder pattern using existing templates.
+    
+    Args:
+        name: Name of the application
+        description: Description of the application
+        output_dir: Directory to create the application in
+        
+    Returns:
+        Dict with result status and message
+    """
+    import os
+    import shutil
+    from pathlib import Path
+    import jinja2
+    
+    # Get the templates directory
+    templates_source_dir = Path(__file__).parent / "templates" / "flask"
+    if not templates_source_dir.exists():
+        return {
+            "status": "error",
+            "message": f"Flask templates directory not found at {templates_source_dir}"
+        }
+    
+    # Create project directory
+    project_dir = Path(output_dir) / name
+    os.makedirs(project_dir, exist_ok=True)
+    
+    # Create required directories
+    for directory in ["templates", "static/css", "static/js"]:
+        os.makedirs(project_dir / directory, exist_ok=True)
+    
+    # Setup Jinja environment for template rendering
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(templates_source_dir),
+        autoescape=jinja2.select_autoescape(['html', 'xml']),
+        undefined=jinja2.StrictUndefined  # Raise errors for undefined variables
+    )
+    
+    # Define template variables
+    template_vars = {
+        "app_name": name,
+        "description": description
+    }
+    
+    # Render Jinja template files
+    for template_file in templates_source_dir.glob("*.jinja"):
+        # Skip some templates that may not be necessary for a basic Flask builder
+        if template_file.name == "requirements.in.jinja":
+            continue
+            
+        try:
+            # Read template
+            with open(template_file, 'r') as f:
+                template_content = f.read()
+            
+            # Create template from string
+            template = env.from_string(template_content)
+            
+            # Render template with detailed error handling
+            try:
+                rendered_content = template.render(**template_vars)
+            except jinja2.TemplateError as render_error:
+                print(f"Error rendering template {template_file}: {render_error}")
+                print(f"Template content:\n{template_content}")
+                print(f"Template variables: {template_vars}")
+                raise
+            
+            # Get output filename (remove .jinja extension)
+            output_filename = template_file.name.replace('.jinja', '')
+            
+            # Write rendered content
+            with open(project_dir / output_filename, 'w') as f:
+                f.write(rendered_content)
+                
+            print(f"Created {output_filename}")
+        
+        except Exception as e:
+            print(f"Failed to process template {template_file}: {e}")
+            # Optionally, you could choose to continue or break here
+            raise
+        if HAS_TYPER:
+            typer.echo(f"Created {output_filename}")
+        else:
+            print(f"Created {output_filename}")
+    
+    # Copy static files (CSS, JS, etc.)
+    if (templates_source_dir / "static").exists():
+        for static_file in (templates_source_dir / "static").glob("**/*"):
+            if static_file.is_file():
+                relative_path = static_file.relative_to(templates_source_dir / "static")
+                target_path = project_dir / "static" / relative_path
+                os.makedirs(target_path.parent, exist_ok=True)
+                shutil.copy2(static_file, target_path)
+                if HAS_TYPER:
+                    typer.echo(f"Copied {relative_path}")
+                else:
+                    print(f"Copied {relative_path}")
+    
+    # Copy template files (HTML)
+    if (templates_source_dir / "templates").exists():
+        for template_file in (templates_source_dir / "templates").glob("*.html"):
+            # Read template
+            with open(template_file, 'r') as f:
+                template_content = f.read()
+                
+            # Create Jinja template from string
+            template = env.from_string(template_content)
+            
+            # Render template
+            try:
+                rendered_content = template.render(**template_vars)
+            except Exception:
+                # If rendering fails, just copy the file as-is
+                rendered_content = template_content
+            
+            # Write rendered content
+            target_path = project_dir / "templates" / template_file.name
+            with open(target_path, 'w') as f:
+                f.write(rendered_content)
+                
+            if HAS_TYPER:
+                typer.echo(f"Created {template_file.name}")
+            else:
+                print(f"Created {template_file.name}")
+    
+        # Create README.md if not already created from templates
+        readme_path = project_dir / "README.md"
+        if not readme_path.exists():
+            readme_template = """# {app_name}
+
+    {description}
+
+    ## Overview
+
+    This is a self-building Flask application created with AgentScaffold. It allows you to generate application components based on natural language descriptions.
+
+    ## Getting Started
+
+    ### Prerequisites
+
+    - Python 3.9+
+    - pip
+
+    ### Installation
+
+    1. Clone this repository
+    2. Install dependencies:
+
+    ```bash
+    pip install -r requirements.txt
+    """.format(app_name=name, description=description)
+
+        # Write README.md
+        with open(readme_path, 'w') as f:
+            f.write(readme_template)
+        
+        if HAS_TYPER:
+            typer.echo(f"Created README.md")
+        else:
+            print(f"Created README.md")
+
+        return {
+            "status": "success",
+            "message": f"Created Flask builder application in {project_dir} using templates",
+            "path": str(project_dir)
+        }
